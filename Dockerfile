@@ -1,4 +1,4 @@
-FROM image.libretechconsulting.com/library/python:3
+FROM docker.io/python:3-slim-bookworm
 WORKDIR /usr/src/app
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
