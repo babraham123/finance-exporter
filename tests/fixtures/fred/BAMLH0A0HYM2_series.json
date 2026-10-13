@@ -1,0 +1,22 @@
+{
+ "realtime_end": "2026-10-13",
+ "realtime_start": "2026-10-13",
+ "seriess": [
+  {
+   "frequency": "Daily, Close",
+   "frequency_short": "D",
+   "id": "BAMLH0A0HYM2",
+   "last_updated": "2026-10-13 15:16:05-05",
+   "observation_end": "2026-10-12",
+   "observation_start": "1996-12-31",
+   "popularity": 90,
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "seasonal_adjustment": "Not Seasonally Adjusted",
+   "seasonal_adjustment_short": "NSA",
+   "title": "ICE BofA US High Yield Index Option-Adjusted Spread",
+   "units": "Percent",
+   "units_short": "%"
+  }
+ ]
+}

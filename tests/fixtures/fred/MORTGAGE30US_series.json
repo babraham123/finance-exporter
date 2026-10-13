@@ -1,0 +1,22 @@
+{
+ "realtime_end": "2026-10-13",
+ "realtime_start": "2026-10-13",
+ "seriess": [
+  {
+   "frequency": "Weekly, Ending Thursday",
+   "frequency_short": "W",
+   "id": "MORTGAGE30US",
+   "last_updated": "2026-10-13 15:16:05-05",
+   "observation_end": "2026-10-08",
+   "observation_start": "1971-04-02",
+   "popularity": 90,
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "seasonal_adjustment": "Not Seasonally Adjusted",
+   "seasonal_adjustment_short": "NSA",
+   "title": "30-Year Fixed Rate Mortgage Average in the United States",
+   "units": "Percent",
+   "units_short": "%"
+  }
+ ]
+}

@@ -11,3 +11,4 @@ services:
     environment:
       - CONFIG=/usr/src/app/finance-exporter.yaml
       - OPTS=-v
+      - FRED_API_KEY=${FRED_API_KEY}

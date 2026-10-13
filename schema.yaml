@@ -7,13 +7,12 @@ additionalProperties: false
 required:
   - address
   - port
-  - tickers
   - sources
 
 properties:
   min_interval:
     title: Minimum Update Interval
-    description: Minimum time between updates (in seconds).
+    description: Minimum time between updates (in seconds). Defaults to 15.
     type: integer
     minimum: 1
   port:
@@ -31,17 +30,6 @@ properties:
     anyOf:
       - type: string
       - type: "null"
-  update_cache_on_startup:
-    title: Update cache on startup
-    description: Whether or not to load label values from each source for each ticket before the first metric run. Always use for multi-source configurations where some sources lack labels of others to reduce split time series. Boolean.
-    type: boolean
-
-  tickers:
-    type: array
-    items:
-      type: string
-    minItems: 1
-    uniqueItems: true
 
   sources:
     title: List of data sources
@@ -55,9 +43,12 @@ definitions:
 
   source:
     type: object
+    additionalProperties: false
     required:
       - name
+      - plugin
       - interval
+      - tickers
       - metrics
     properties:
       name:
@@ -69,18 +60,30 @@ definitions:
         type: integer
       plugin:
         title: Data API Plugin
-        description: Name of plugin to retrieve data
+        description: Name of plugin to retrieve data. Allowed values are filled in from the plugin registry (includes/plugins).
         type: string
-        enum:
-          - yfinance
-          - iexcloud
-          - AlphaVantage
       api_key:
         title: API Key for plugin
-        description: API Key, required for iexcloud and AlphaVantage
+        description: API Key, required for fred and alphavantage. May reference an environment variable, e.g. ${FRED_API_KEY}
         type: string
+      curve:
+        title: Treasury yield curve
+        description: Which daily Treasury par yield curve to read (treasury plugin only). Defaults to nominal.
+        type: string
+        enum:
+          - nominal
+          - real
+      tickers:
+        title: Symbols to poll from this source
+        description: Yahoo symbols, FRED series IDs, Treasury tenors (e.g. 10Y), or AlphaVantage symbols, depending on plugin
+        type: array
+        items:
+          type: string
+        minItems: 1
+        uniqueItems: true
       metrics:
         title: Definitions of metrics to retrieve from source
+        description: Metric names must be unique across all sources
         type: object
         patternProperties:
           ^\w+$:
@@ -92,6 +95,23 @@ definitions:
         patternProperties:
           ^\w+$:
             type: string
+    allOf:
+      - if:
+          properties:
+            plugin:
+              enum: [fred, alphavantage]
+        then:
+          required:
+            - api_key
+      - if:
+          not:
+            properties:
+              plugin:
+                const: treasury
+        then:
+          not:
+            required:
+              - curve
 
   metric:
     title: Metric configuration
@@ -108,15 +128,18 @@ definitions:
         description: Name of field from API response (e.g. pe_ratio)
         type: string
       type:
-        title: API Item
-        description: Name of field from API response (e.g. pe_ratio)
+        title: Metric type
+        description: Prometheus metric type
         type: string
         enum:
           - Gauge
           - Counter
           - Summary
           - Histogram
-          - Text
       help:
         title: Help text
         type: string
+      scale:
+        title: Scale factor
+        description: Multiplier applied to the value, e.g. 0.01 to convert a percent to a ratio
+        type: number

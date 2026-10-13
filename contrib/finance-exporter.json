@@ -623,7 +623,8 @@
                 ],
                 "operation": "aggregate"
               },
-              "Value #M": {                "aggregations": [
+              "Value #M": {
+                "aggregations": [
                   "lastNotNull"
                 ],
                 "operation": "aggregate"
@@ -721,7 +722,7 @@
               },
               {
                 "color": "green",
-                "value": 1e-7
+                "value": 1e-07
               }
             ]
           },
@@ -1080,7 +1081,7 @@
                     },
                     {
                       "color": "red",
-                      "value": 0.00001
+                      "value": 1e-05
                     }
                   ]
                 }
@@ -1263,7 +1264,7 @@
               },
               {
                 "color": "green",
-                "value": 1e-7
+                "value": 1e-07
               }
             ]
           },
@@ -1309,6 +1310,184 @@
       ],
       "title": "Yesterday Change",
       "type": "stat"
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Rates",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 101,
+      "type": "timeseries",
+      "title": "Treasury Yields",
+      "datasource": {
+        "type": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "refId": "A",
+          "expr": "finance_treasury_yield",
+          "legendFormat": "{{ticker}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "refId": "B",
+          "expr": "finance_treasury_real_yield",
+          "legendFormat": "{{ticker}} real"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "timeseries",
+      "title": "FRED Rates & Spreads",
+      "datasource": {
+        "type": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 9,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "refId": "A",
+          "expr": "finance_fred_value",
+          "legendFormat": "{{ticker}}"
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "Data Age (days)",
+      "datasource": {
+        "type": "prometheus"
+      },
+      "description": "Days since the date of each series' latest observation. Weekly and monthly series age by design.",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 4
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (ticker) ((time() - finance_fred_observation_time) / 86400)",
+          "legendFormat": "{{ticker}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus"
+          },
+          "refId": "B",
+          "expr": "max((time() - finance_treasury_observation_time) / 86400)",
+          "legendFormat": "Treasury curve"
+        }
+      ]
     }
   ],
   "refresh": "1m",
@@ -1317,6 +1496,36 @@
   "tags": [],
   "templating": {
     "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus"
+        },
+        "definition": "label_values(finance_current_price, asset_class)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "asset_class",
+        "options": [],
+        "query": {
+          "query": "label_values(finance_current_price, asset_class)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "label": "Asset class"
+      },
       {
         "current": {
           "selected": true,
@@ -1336,14 +1545,14 @@
         "datasource": {
           "type": "prometheus"
         },
-        "definition": "label_values(finance_current_price, ticker)",
+        "definition": "label_values(finance_current_price{asset_class=~\"$asset_class\"}, ticker)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "stocks",
         "options": [],
         "query": {
-          "query": "label_values(finance_current_price, ticker)",
+          "query": "label_values(finance_current_price{asset_class=~\"$asset_class\"}, ticker)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

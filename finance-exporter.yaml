@@ -1,61 +1,34 @@
----
 port: 8000
 address: 0.0.0.0
 metric_prefix: finance
 min_interval: 15
-# If set, each ticker will load labels from each source
-# before the first run. Slows down startup time but
-# necessary if using multiple sources that do not
-# provide all labels
-update_cache_on_startup: false
 
-tickers:
-  - AAPL
-  - GOOG
-
+# Each source polls its own tickers and exports its own metrics and labels.
+# Metric names must be unique across sources.
 sources:
-  - name: iexcloud
-    interval: 60
-    plugin: iexcloud
-    api_key: demo
-    metrics:
-      current_price:
-        item: iexRealtimePrice
-        type: Gauge
-        help: Current Market Price of Asset
-      change:
-        item: changePercent
-        type: Gauge
-        help: P/C Since Open
-      change_ytd:
-        item: ytdChange
-        type: Gauge
-        help: P/C Year-to-Date
-      volume:
-        item: iexVolume
-        type: Gauge
-        help: Current Market Volume
-      previous_volume:
-        item: previousVolume
-        type: Gauge
-        help: Previous Volume
-      avg_volume:
-        item: avgTotalVolume
-        type: Gauge
-        help: Average Volume
-      pe_ratio:
-        item: peRatio
-        type: Gauge
-        help: Price-to-Earnings Ratio
-
+  # Stocks, ETFs, mutual funds, indices, FX, crypto and futures
   - name: yahoo
     interval: 300
     plugin: yfinance
+    tickers:
+      - AAPL
+      - GOOG
+      - SPY       # ETF
+      - VTSAX     # Mutual fund (NAV updates once a day)
+      - ^GSPC     # Index
+      - EURUSD=X  # FX
+      - BTC-USD   # Crypto
+      - GC=F      # Gold futures
     metrics:
-      #current_price:
-      #  item: regularMarketPrice
-      #  type: Gauge
-      #  help: Current Market Price of Asset
+      current_price:
+        item: regularMarketPrice
+        type: Gauge
+        help: Current Market Price of Asset
+      change:
+        item: regularMarketChangePercent
+        type: Gauge
+        help: Change since previous close (ratio)
+        scale: 0.01
       open_price:
         item: regularMarketOpen
         type: Gauge
@@ -84,14 +57,10 @@ sources:
         item: targetMedianPrice
         type: Gauge
         help: Target Price (Median)
-        #volume:
-        #  item: regularMarketVolume
-        #  type: Gauge
-        #  help: Current Market Volume
-        #avg_volume:
-        #  item: averageVolume
-        #  type: Gauge
-        #  help: Average Volume
+      volume:
+        item: regularMarketVolume
+        type: Gauge
+        help: Current Market Volume
       avg_10day_volume:
         item: averageDailyVolume10Day
         type: Gauge
@@ -116,10 +85,142 @@ sources:
         item: beta
         type: Gauge
         help: Beta
+      # Funds (ETFs and mutual funds). Yahoo mixes units, so check `scale` per field.
+      nav:
+        item: navPrice
+        type: Gauge
+        help: Net Asset Value per share
+      total_assets:
+        item: totalAssets
+        type: Gauge
+        help: Fund Total Assets
+      fund_yield:
+        item: yield
+        type: Gauge
+        help: Fund Yield (ratio)
+      ytd_return:
+        item: ytdReturn
+        type: Gauge
+        help: Year-to-Date Return (ratio)
+        scale: 0.01
+      three_year_return:
+        item: threeYearAverageReturn
+        type: Gauge
+        help: Three Year Average Annual Return (ratio)
+      five_year_return:
+        item: fiveYearAverageReturn
+        type: Gauge
+        help: Five Year Average Annual Return (ratio)
+      expense_ratio:
+        item: netExpenseRatio
+        type: Gauge
+        help: Net Expense Ratio (ratio)
+        scale: 0.01
+      stock_position:
+        item: stockPosition
+        type: Gauge
+        help: Share of Fund Held in Stocks (ratio)
+      bond_position:
+        item: bondPosition
+        type: Gauge
+        help: Share of Fund Held in Bonds (ratio)
     labels:
-      ticker: symbol
-      type: quoteType
+      asset_class: asset_class
       name: shortName
       exchange: exchange
       recommendation: recommendationKey
       sector: sector
+      category: category
+      fund_family: fundFamily
+
+  # Treasury yields, credit spreads, policy and mortgage rates.
+  # Free API key: https://fred.stlouisfed.org/docs/api/api_key.html
+  - name: fred
+    interval: 3600
+    plugin: fred
+    api_key: ${FRED_API_KEY}
+    tickers:
+      - DGS3MO        # 3-Month Treasury
+      - DGS2          # 2-Year Treasury
+      - DGS10         # 10-Year Treasury
+      - DGS30         # 30-Year Treasury
+      - T10Y2Y        # 10Y minus 2Y spread
+      - T10Y3M        # 10Y minus 3M spread
+      - BAMLC0A0CM    # Investment-grade corporate spread
+      - BAMLH0A0HYM2  # High-yield corporate spread
+      - T10YIE        # 10-Year breakeven inflation
+      - DFF           # Fed funds effective rate
+      - SOFR          # Secured overnight financing rate
+      - MORTGAGE30US  # 30-Year mortgage rate (weekly)
+    metrics:
+      fred_value:
+        item: value
+        type: Gauge
+        help: Latest FRED observation (ratio)
+        scale: 0.01
+      fred_observation_time:
+        item: observation_time
+        type: Gauge
+        help: Date of the latest FRED observation (Unix time, midnight UTC)
+    labels:
+      asset_class: asset_class
+      frequency: frequency
+      name: title
+
+  # Official daily par yield curves; no API key needed
+  - name: treasury
+    interval: 3600
+    plugin: treasury
+    curve: nominal
+    tickers: [1M, 3M, 6M, 1Y, 2Y, 5Y, 10Y, 20Y, 30Y]
+    metrics:
+      treasury_yield:
+        item: value
+        type: Gauge
+        help: Treasury par yield (ratio)
+        scale: 0.01
+      treasury_observation_time:
+        item: observation_time
+        type: Gauge
+        help: Date of the yield curve (Unix time, midnight UTC)
+    labels:
+      asset_class: asset_class
+      curve: curve
+
+  - name: treasury_real
+    interval: 3600
+    plugin: treasury
+    curve: real
+    tickers: [5Y, 10Y, 30Y]
+    metrics:
+      treasury_real_yield:
+        item: value
+        type: Gauge
+        help: Treasury real (TIPS) par yield (ratio)
+        scale: 0.01
+      treasury_real_observation_time:
+        item: observation_time
+        type: Gauge
+        help: Date of the real yield curve (Unix time, midnight UTC)
+    labels:
+      asset_class: asset_class
+      curve: curve
+
+  # Free tier allows 25 requests/day and each ticker costs 3, so keep the interval long
+  # - name: alphavantage
+  #   interval: 86400
+  #   plugin: alphavantage
+  #   api_key: ${ALPHAVANTAGE_API_KEY}
+  #   tickers: [IBM]
+  #   metrics:
+  #     av_price:
+  #       item: price
+  #       type: Gauge
+  #       help: Latest price
+  #     av_reported_eps:
+  #       item: reportedEPS
+  #       type: Gauge
+  #       help: Latest quarterly reported EPS
+  #   labels:
+  #     asset_class: asset_class
+  #     sector: Sector

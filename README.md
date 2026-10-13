@@ -1,34 +1,21 @@
 # finance-exporter
-**Prometheus Exporter for Market Data**
-This exporter allows you to define metrics and labels to be collected
-and served on a prometheus metrics endpoint.
+finance-exporter polls market and rates data from multiple sources and serves it on a Prometheus metrics endpoint.
 
-Currently, three APIs are supported:
-* Yahoo Finance
-* IEXCloud
-* AlphaVantage
+Supported sources:
 
-For IEXCloud and AlphaVantage, an API key must be specified in api_key for the source.
+| Plugin | Covers | API key |
+|---|---|---|
+| `yfinance` (Yahoo Finance) | Stocks, ETFs, mutual funds, indices, FX, crypto, futures | No |
+| `fred` (St. Louis Fed) | Treasury yields, credit spreads, policy rates, inflation, mortgage rates, and other economic series | Yes, free: [request one](https://fred.stlouisfed.org/docs/api/api_key.html) |
+| `treasury` (Treasury.gov) | Official daily Treasury par yield curves, nominal and real | No |
+| `alphavantage` | Stocks (quote, company overview, latest earnings) | Yes. Free tier: 25 requests/day, 3 per ticker |
 
 ## Grafana Dashboard Sample
-Grafana Dashboard json in [Grafana JSON](contrib/finance-exporter.json)
+Sample in [Grafana JSON](contrib/finance-exporter.json) with an `asset_class` filter, per-ticker market panels, and a Rates row.
 ![Grafana Dashboard](contrib/grafana.png)
 
 ## Configuration
-Configuration is well defined in schema.yaml. The primary sections are:
-1. Global parameters
-1. Tickers
-1. Sources
-
-For each source, metrics and labels are defined. If using multiple sources,
-the metrics will be build with the full combination of labels. This is to allow
-for a more rich source of data to populate metrics for less rich, data-only type
-APIs. For instance, Yahoo Finance provides many details in their quote that IEXCloud
-lacks, but IEXCloud has metrics that Yahoo Finance lacks. You can define the labels
-on Yahoo Finance and they will be added to metrics of the same symbol from IEXCloud.
-
-If you have more than one source and the full set of labels are not collected
-from both, be certain to set `update_cache_on_startup: true`
+The config file is validated against [schema.yaml](schema.yaml). Sources are independent and metric names must be unique across all sources. Map environment variables for API keys (e.g., `${FRED_API_KEY}`). Full example: [finance-exporter.yaml](finance-exporter.yaml).
 
 **Global Settings**
 ```yaml
@@ -36,14 +23,6 @@ port: 8000
 address: 0.0.0.0
 metric_prefix: finance
 min_interval: 15
-update_cache_on_startup: false
-```
-
-**Tickers**
-```yaml
-tickers:
-  - AAPL
-  - GOOG
 ```
 
 **Sources**
@@ -52,41 +31,83 @@ sources:
   - name: yahoo
     interval: 300
     plugin: yfinance
+    tickers: [AAPL, SPY, VTSAX, ^GSPC, EURUSD=X, BTC-USD, GC=F]
     metrics:
+      ...
+    labels:
+      ...
 ```
 
+`tickers` format by plugin:
+
+| Plugin | Tickers | Example |
+|---|---|---|
+| `yfinance` | Yahoo symbols | `AAPL`, `SPY`, `^GSPC`, `EURUSD=X`, `BTC-USD`, `GC=F` |
+| `fred` | FRED series IDs | `DGS10`, `T10Y2Y`, `BAMLH0A0HYM2`, `MORTGAGE30US` |
+| `treasury` | Tenors on the curve | `3M`, `2Y`, `10Y`, `30Y` (the real curve has 5Y–30Y only) |
+| `alphavantage` | Stock symbols | `IBM` |
+
+*Note:* The `treasury` plugin accepts `curve: nominal` (default) or `curve: real`. Add two sources to export both.
+
 **Metrics**
+`item` is the response field. Optional `scale` multiplies the value (e.g., `0.01`). Non-numeric values are skipped.
 ```yaml
-      open_price:
-        item: regularMarketOpen
+    metrics:
+      current_price:
+        item: regularMarketPrice
         type: Gauge
-        help: Day Open Price
-      previous_close:
-        item: regularMarketPreviousClose
+        help: Current Market Price of Asset
+      expense_ratio:
+        item: netExpenseRatio
         type: Gauge
-        help: Previous Closing Price
+        help: Net Expense Ratio (ratio)
+        scale: 0.01
+```
+
+| Plugin | Fields |
+|---|---|
+| `yfinance` | Everything in Yahoo's quote. ETFs and mutual funds also get `category`, `fundFamily`, `legalType`, `annualReportExpenseRatio`, `annualHoldingsTurnover` and asset mix (`stockPosition`, `bondPosition`, ...). Yahoo mixes percents and ratios, so check each field. |
+| `fred` | `value`, `observation_time`, `title`, `frequency`, `units` |
+| `treasury` | `value`, `observation_time`, `curve` |
+| `alphavantage` | Quote fields (`price`, `volume`, ...), company overview fields, latest quarterly earnings |
+
+| Plugin | `asset_class` values |
+|---|---|
+| `yfinance` | `stock`, `etf`, `mutual_fund`, `index`, `fx`, `crypto`, `future` |
+| `fred` | `rate` (series measured in percent), otherwise `economic_indicator` |
+| `treasury` | `treasury_yield` |
+| `alphavantage` | `stock`, `etf`, `mutual_fund` |
+
+**Observation time**
+`observation_time` (FRED and Treasury) is the data date as a Unix timestamp at midnight UTC. Use it to alert on stale values:
+```
+time() - finance_fred_observation_time{ticker="DGS10"} > 4 * 86400
 ```
 
 **Labels**
+Map label names to source fields. `plugin`, `source` and `ticker` are added automatically.
 ```yaml
     labels:
-      ticker: symbol
-      type: quoteType
+      asset_class: asset_class
       name: shortName
-      exchange: exchange
-      recommendation: recommendationKey
       sector: sector
+      category: category
 ```
 
+### Migrating from older configs
+* Move the top-level `tickers` list into each source's `tickers`.
+* Delete `update_cache_on_startup`. Labels are no longer shared between sources.
+* Replace `iexcloud` sources (shut down August 2024). Yahoo's `regularMarketPrice` and `regularMarketVolume` replace `current_price` and `volume`.
+* Write AlphaVantage's plugin name as `alphavantage`.
+
 ## Running the exporter
-If you want to run as-is, simply install modules in requirements.txt
-using your preferred means (e.g. pip3 install -r requirements.txt) and run.
+Install dependencies (`pip3 install -r requirements.txt`) and run. Use `docker-compose` to run via Docker, passing env vars like `FRED_API_KEY`. 
 
 **Script Options**
 ```bash
 usage: finance-exporter.py [-h] -f CONFIG [-v] [-p PORT] [-a ADDRESS] [-d]
 
-Google Finance Prometheus Exporter
+Finance Prometheus Exporter
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -99,12 +120,9 @@ optional arguments:
   -d, --debug           Dump API Data
 ```
 
-### Running in Docker
-A docker-compose is provided showing the location of the config volume as well as env vars.
-
-You can run directly via docker / podman, or you can run with docker-compose. There is nothing
-particularly special to add, and since this isn't docker training, this is an execise for the
-reader.
-
-I'm not currently publishing this to dockerhub or anywhere else, since I'm currently the only
-user of it in the world that I'm aware of. Do prove me wrong!
+## Tests
+```bash
+pip3 install -r requirements-dev.txt
+pytest tests
+```
+To re-record API responses to `tests/fixtures`, run `python3 tests/record_fixtures.py`. Set `FRED_API_KEY` to include FRED.
