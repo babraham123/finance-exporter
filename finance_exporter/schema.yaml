@@ -129,11 +129,10 @@ definitions:
         type: string
       type:
         title: Metric type
-        description: Prometheus metric type
+        description: Prometheus metric type. Quote fields are snapshots, so Counter is not offered.
         type: string
         enum:
           - Gauge
-          - Counter
           - Summary
           - Histogram
       help:

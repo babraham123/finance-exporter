@@ -30,8 +30,8 @@ def main(argv=None):
     last_run = { name: 0 for name in exporter.sources }
     while True:
         for name, source in exporter.sources.items():
-            if time.time() - last_run[name] > source['interval']:
+            if time.time() - last_run[name] > source.interval:
                 log.info(f"Updating Source {name}")
-                exporter.update(source)
+                source.poll()
                 last_run[name] = time.time()
         time.sleep(exporter.config['min_interval'])

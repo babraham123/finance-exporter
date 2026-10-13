@@ -1,5 +1,7 @@
 import pytest
-from conftest import FakeTicker, find, fixture_json, label_names, midnight_utc
+from prometheus_client import CollectorRegistry
+from conftest import FakeTicker, find, fixture_json, label_names, midnight_utc, read_samples
+from finance_exporter.source import Builtins, Source
 
 YAHOO_ASSET_CLASSES = {
     'AAPL': 'stock',
@@ -133,7 +135,7 @@ def test_failed_sources_and_tickers_do_not_stop_others(start_exporter, http, fre
         alphavantage_source(),
     ))
     exporter.poll()
-    samples = exporter.scrape()
+    samples = exporter.samples()
 
     # Yahoo retries through rate limiting
     assert find(samples, 'finance_current_price', ticker='SPY') is not None
@@ -150,7 +152,7 @@ def test_source_wide_failure_counts_an_error_per_ticker(start_exporter, http):
     http.failing_hosts = {'treasury.gov'}
     exporter = start_exporter(config(treasury_source(tickers=['3M', '10Y']), yahoo_source(['AAPL'])))
     exporter.poll()
-    samples = exporter.scrape()
+    samples = exporter.samples()
 
     assert find(samples, 'finance_fetch_errors_total', source='treasury', ticker='3M') == 1
     assert find(samples, 'finance_fetch_errors_total', source='treasury', ticker='10Y') == 1
@@ -165,11 +167,69 @@ def test_treasury_uses_previous_year_before_first_business_day(start_exporter, h
     http.empty_treasury_years = {0}
     exporter = start_exporter(config(treasury_source(tickers=['10Y'])))
     exporter.poll()
-    samples = exporter.scrape()
+    samples = exporter.samples()
 
     assert find(samples, 'finance_treasury_yield', ticker='10Y') == pytest.approx(0.0521)
     requested_years = [int(params['field_tdr_date_value']) for url, params in http.calls]
     assert requested_years[1] == requested_years[0] - 1
+
+
+class ScriptedPlugin:
+    """Yields the given {ticker: result} for each poll in turn, then raises `then` if set."""
+
+    def __init__(self, *polls, then=None):
+        self.polls = list(polls)
+        self.then = then
+
+    def fetch_all(self, symbols):
+        yield from self.polls.pop(0).items()
+        if self.then:
+            raise self.then
+
+
+def scripted_source(plugin, tickers=('X',), metrics=None, labels=None):
+    registry = CollectorRegistry()
+    config = {
+        'name': 'scripted', 'plugin': 'fake', 'interval': 60, 'tickers': list(tickers),
+        'metrics': metrics or {'price': {'item': 'price', 'type': 'Gauge', 'help': 'Price'}},
+        'labels': labels or dict(),
+    }
+    return Source(config, plugin, registry, Builtins(registry, 'finance'), 'finance'), registry
+
+
+def test_source_records_each_metric_type_and_keeps_last_known_labels():
+    plugin = ScriptedPlugin({'X': {'price': '10', 'sector': 'Tech'}}, {'X': {'price': 12}})
+    source, registry = scripted_source(plugin, metrics={
+        'price': {'item': 'price', 'type': 'Gauge', 'help': 'Price'},
+        'price_histogram': {'item': 'price', 'type': 'Histogram', 'help': 'Price'},
+        'price_summary': {'item': 'price', 'type': 'Summary', 'help': 'Price', 'scale': 0.5},
+    }, labels={'sector': 'sector'})
+    source.poll()
+    source.poll()
+    samples = read_samples(registry)
+
+    # The second quote lacks sector, so the series keeps the last known value rather than splitting
+    assert find(samples, 'finance_price', ticker='X', sector='Tech', source='scripted', plugin='fake') == 12
+    assert label_names(samples, 'finance_price') == {frozenset({'plugin', 'source', 'ticker', 'sector'})}
+    assert find(samples, 'finance_price_histogram_count', ticker='X') == 2
+    assert find(samples, 'finance_price_histogram_sum', ticker='X') == 22
+    assert find(samples, 'finance_price_summary_sum', ticker='X') == 11
+    assert find(samples, 'finance_updates_total', ticker='X') == 2
+
+
+def test_source_failure_mid_poll_counts_errors_only_for_unfetched_tickers():
+    plugin = ScriptedPlugin({'A': {'price': 1}, 'B': None}, then=RuntimeError('connection reset'))
+    source, registry = scripted_source(plugin, tickers=['A', 'B', 'C', 'D'])
+    source.poll()
+    samples = read_samples(registry)
+
+    assert find(samples, 'finance_price', ticker='A') == 1
+    # No data is not an error
+    assert find(samples, 'finance_fetch_errors_total', ticker='B') is None
+    assert find(samples, 'finance_updates_total', ticker='B') is None
+    assert find(samples, 'finance_fetch_errors_total', ticker='C') == 1
+    assert find(samples, 'finance_fetch_errors_total', ticker='D') == 1
+    assert find(samples, 'finance_poll_seconds_count', source='scripted') == 1
 
 
 @pytest.mark.parametrize('bad_config, error', [
@@ -179,6 +239,7 @@ def test_treasury_uses_previous_year_before_first_business_day(start_exporter, h
     (lambda: config({k: v for k, v in yahoo_source().items() if k != 'tickers'}), "'tickers' is a required property"),
     (lambda: config({k: v for k, v in fred_source().items() if k != 'api_key'}), "'api_key' is a required property"),
     (lambda: config({**yahoo_source(), 'plugin': 'iexcloud'}), "'iexcloud' is not one of"),
+    (lambda: config({**yahoo_source(), 'metrics': {'price': {'item': 'regularMarketPrice', 'type': 'Counter', 'help': 'Price'}}}), "'Counter' is not one of"),
     (lambda: config({**yahoo_source(), 'curve': 'real'}), 'Invalid config at sources/0'),
     (lambda: config(treasury_source(), {**treasury_source(), 'name': 'other'}), 'metric names must be unique across sources'),
     (lambda: config(yahoo_source(), {**yahoo_source(['SPY']), 'metrics': {}}), 'used more than once'),

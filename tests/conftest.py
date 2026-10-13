@@ -105,31 +105,44 @@ class FakeTicker:
         )
 
 
-class RunningExporter:
-    """A running exporter on an ephemeral port with its own metric registry."""
+def read_samples(registry):
+    """Samples in a registry as {(name, frozenset(labels)): value}."""
+    return {
+        (sample.name, frozenset(sample.labels.items())): sample.value
+        for family in registry.collect()
+        for sample in family.samples
+    }
+
+
+class ExporterUnderTest:
+    """An exporter with its own metric registry; its HTTP server starts only when scraped."""
 
     def __init__(self, config_path, http):
         self.http = http
-        self.exporter = Exporter(config_path, port=0, address='127.0.0.1', registry=CollectorRegistry())
-        self.server = self.exporter.start_server()
+        self.registry = CollectorRegistry()
+        self.exporter = Exporter(config_path, port=0, address='127.0.0.1', registry=self.registry)
 
     def poll(self):
         for source in self.exporter.sources.values():
-            self.exporter.update(source)
+            source.poll()
+
+    def samples(self):
+        return read_samples(self.registry)
 
     def scrape(self):
-        """Samples from /metrics as {(name, frozenset(labels)): value}."""
-        with urllib.request.urlopen(f'http://127.0.0.1:{self.server.server_port}/metrics') as response:
-            text = response.read().decode()
+        """Samples as served over HTTP on /metrics."""
+        server = self.exporter.start_server()
+        try:
+            with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}/metrics') as response:
+                text = response.read().decode()
+        finally:
+            server.shutdown()
+            server.server_close()
         return {
             (sample.name, frozenset(sample.labels.items())): sample.value
             for family in text_string_to_metric_families(text)
             for sample in family.samples
         }
-
-    def close(self):
-        self.server.shutdown()
-        self.server.server_close()
 
 
 def find(samples, name, **labels):
@@ -157,15 +170,10 @@ def http(monkeypatch):
 
 @pytest.fixture
 def start_exporter(http, tmp_path):
-    exporters = list()
-
     def start(config):
         path = tmp_path / 'config.yaml'
         path.write_text(config if isinstance(config, str) else yaml.safe_dump(config))
-        exporter = RunningExporter(str(path), http)
-        exporters.append(exporter)
+        exporter = ExporterUnderTest(str(path), http)
         return exporter
 
-    yield start
-    for exporter in exporters:
-        exporter.close()
+    return start
