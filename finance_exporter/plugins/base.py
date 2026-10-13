@@ -4,10 +4,6 @@ import requests
 HTTP_TIMEOUT = 30
 
 
-def log(msg):
-    print(f'{datetime.now()} {msg}', flush=True)
-
-
 def date_to_epoch(date_string, fmt='%Y-%m-%d'):
     """Midnight UTC of a date, as a Unix timestamp."""
     return datetime.strptime(date_string, fmt).replace(tzinfo=timezone.utc).timestamp()

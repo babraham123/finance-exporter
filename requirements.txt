@@ -1,6 +1,0 @@
-pyyaml
-yfinance
-pandas
-prometheus_client
-jsonschema
-requests

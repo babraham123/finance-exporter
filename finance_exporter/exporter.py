@@ -1,14 +1,16 @@
-#!/usr/bin/python3
-import argparse
-import time
+import logging
 import os
-import yaml
-import jsonschema
-from prometheus_client import start_http_server, Counter, Gauge, Summary, Histogram, REGISTRY
-from includes.plugins import PLUGINS
-from includes.plugins.base import log
-# Debug
+import time
+from importlib import resources
 from pprint import pformat
+
+import jsonschema
+import yaml
+from prometheus_client import start_http_server, Counter, Gauge, Summary, Histogram, REGISTRY
+
+from .plugins import PLUGINS
+
+log = logging.getLogger(__name__)
 
 DEFAULT_LABELS = ['plugin', 'source', 'ticker']
 BUILTIN_METRICS = ('updates', 'quote_time', 'quote_histogram')
@@ -19,64 +21,58 @@ REMOVED_KEYS = {
     'update_cache_on_startup': 'delete it; labels are no longer shared between sources',
 }
 
-class finance:
 
-    def __init__(self, args, registry=REGISTRY):
-        self.print_log("Starting up...")
-    # Prepare the config
-        self.schema_path = f"{os.path.dirname(__file__)}/schema.yaml"
+class Exporter:
+
+    def __init__(self, config_path, port=None, address=None, registry=REGISTRY):
+        log.info("Starting up...")
         self.registry = registry
-        self.config = dict()
-        self.load_config(args.config)
-    # Set up -- prefer command line arg to yaml arg
-        self.verbose            = args.verbose
-        self.debug              = args.debug
-        self.config['port']     = next(v for v in [ args.port, self.config.get('port') ] if v is not None)
-        self.config['address']  = next(v for v in [ args.address, self.config.get('address') ] if v is not None)
+        self.config = self.load_config(config_path)
+        # Command-line values take precedence over the config file
+        if port is not None:
+            self.config['port'] = port
+        if address is not None:
+            self.config['address'] = address
         self.config.setdefault('min_interval', 15)
-    # Setup plugins
-        self.sources            = self.load_sources()
-        self.metrics            = self.load_metrics()
-    # Last known label values per (source, ticker), so a quote missing a label field doesn't split the series
-        self.label_cache        = dict()
-    # Prepare Prometheus Metrics
-        self.prom_metrics               = dict()
-        self.prom_metrics['updates']    = Counter(self.metric_name('updates'), 'Number of ticker updates', DEFAULT_LABELS, registry=registry)
+        self.sources = self.load_sources()
+        self.metrics = self.load_metrics()
+        # Last known label values per (source, ticker), so a quote missing a label field doesn't split the series
+        self.label_cache = dict()
+        self.prom_metrics = dict()
+        self.prom_metrics['updates'] = Counter(self.metric_name('updates'), 'Number of ticker updates', DEFAULT_LABELS, registry=registry)
         self.prom_metrics['quote_time'] = Gauge(self.metric_name('quote_time'), 'Time spent retrieving quote', DEFAULT_LABELS, registry=registry)
-    # Response time histogram should not include ticker
+        # Response time histogram should not include ticker
         histogram_labels = [ label for label in DEFAULT_LABELS if label != 'ticker' ]
         self.prom_metrics['quote_histogram'] = Histogram(self.metric_name('quote_histogram'),
                                                          'Histogram of quote retrieval times',
                                                          histogram_labels,
                                                          buckets = list(range(1,21)),
                                                          registry = registry)
-    # Initialized Configured Metrics
         self.init_metrics()
-        self.print_log("Ready to Run...")
+        log.info("Ready to Run...")
 
-    def load_config(self, config_file):
-        with open(config_file, 'r') as fd:
-        # Expand ${VAR} references so secrets like API keys can live in the environment
-            self.config = yaml.safe_load(os.path.expandvars(fd.read()))
+    def load_config(self, config_path):
+        with open(config_path, 'r') as fd:
+            # Expand ${VAR} references so secrets like API keys can live in the environment
+            config = yaml.safe_load(os.path.expandvars(fd.read()))
         for key, hint in REMOVED_KEYS.items():
-            if key in self.config:
+            if key in config:
                 raise Exception(f"Config key `{key}` is no longer supported: {hint}")
-        with open(self.schema_path) as fd:
-            schema = yaml.safe_load(fd)
+        schema = yaml.safe_load(resources.files(__package__).joinpath('schema.yaml').read_text())
         schema['definitions']['source']['properties']['plugin']['enum'] = list(PLUGINS)
-        self.print_log("Validating Config...")
+        log.info("Validating Config...")
         try:
-            jsonschema.validate(self.config, schema)
+            jsonschema.validate(config, schema)
         except jsonschema.ValidationError as e:
             path = "/".join(str(item) for item in e.absolute_path)
             raise Exception(f"Invalid config at {path}: {e.message}")
+        return config
 
-    def print_config(self):
-        redacted = { **self.config, 'sources': [
+    def redacted_config(self):
+        return { **self.config, 'sources': [
             { k: ('<redacted>' if k == 'api_key' else v) for k, v in source.items() if k != 'handler' }
             for source in self.config['sources']
         ] }
-        self.print_log(pformat(redacted))
 
     def load_sources(self):
         sources = dict()
@@ -106,14 +102,12 @@ class finance:
 
     def init_metrics(self):
         for name, metric in self.metrics.items():
-            if self.verbose:
-                self.print_log(f"Preparing metric {name}({metric['type']}) from {metric['source']}")
+            log.info(f"Preparing metric {name}({metric['type']}) from {metric['source']}")
             labels = self.sources[metric['source']]['label_names']
             self.prom_metrics[name] = METRIC_TYPES[metric['type']](self.metric_name(name), metric['help'], labels, registry=self.registry)
 
     def start_server(self):
-        if self.verbose:
-            self.print_log(f"Starting HTTP Server on {self.config['address']}:{self.config['port']}")
+        log.info(f"Starting HTTP Server on {self.config['address']}:{self.config['port']}")
         server, _ = start_http_server(int(self.config['port']), addr=self.config['address'], registry=self.registry)
         return server
 
@@ -121,12 +115,10 @@ class finance:
         try:
             return source['handler'].fetch(ticker)
         except Exception as e:
-            self.print_log(f"Unable to fetch {ticker} from {source['name']}")
-            if self.verbose:
-                self.print_log(e)
+            log.warning(f"Unable to fetch {ticker} from {source['name']}: {e}")
         return None
 
-# Prepare labels using standard labels, label cache, and quote labels
+    # Prepare labels using standard labels, label cache, and quote labels
     def quote_labels(self, source, ticker, quote):
         cache = self.label_cache.setdefault((source['name'], ticker), { label: '' for label in source['label_names'] })
         cache.update({
@@ -144,39 +136,31 @@ class finance:
         try:
             return float(value) * metric.get('scale', 1)
         except (TypeError, ValueError):
-            if self.verbose:
-                self.print_log(f"Skipping {name} for {ticker}: {value!r} is not numeric")
+            log.debug(f"Skipping {name} for {ticker}: {value!r} is not numeric")
             return None
 
     def update(self, source):
         try:
             source['handler'].begin_poll()
         except Exception as e:
-            self.print_log(f"Unable to poll {source['name']}: {e}")
+            log.warning(f"Unable to poll {source['name']}: {e}")
             return
         for ticker in source['tickers']:
-            if self.verbose:
-                self.print_log(f"Updating ticker {ticker} from {source['name']}")
+            log.info(f"Updating ticker {ticker} from {source['name']}")
             start_time = time.time()
             quote = self.fetch_data(source, ticker)
             if quote is None:
                 continue
-            if self.debug:
-                self.print_log(pformat(quote))
             duration = time.time() - start_time
-        # Handle labels
+            log.debug(pformat(quote))
             quote_info = self.quote_labels(source, ticker, quote)
             default_info = { label: quote_info[label] for label in DEFAULT_LABELS }
-        # Update Metrics
-            if self.debug:
-                self.print_log(f'Preparing to load metrics with labels: {quote_info}')
             self.prom_metrics['updates'].labels(**default_info).inc()
             self.prom_metrics['quote_time'].labels(**default_info).set(duration)
             self.prom_metrics['quote_histogram'].labels(
                 source = source['name'],
                 plugin = source['plugin']
             ).observe(duration)
-        # Update Configured Metrics
             for name, metric in self.metrics.items():
                 if metric['source'] != source['name']:
                     continue
@@ -189,39 +173,4 @@ class finance:
                     self.prom_metrics[name].labels(**quote_info).set(value)
                 elif metric['type'] in ('Histogram', 'Summary'):
                     self.prom_metrics[name].labels(**quote_info).observe(value)
-            if self.verbose:
-                self.print_log(f" - Updated {ticker} from {source['name']} in {duration}s")
-
-    def print_log(self, msg):
-        log(msg)
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Finance Prometheus Exporter')
-    parser.add_argument('-f', '--config', help='Location of config yaml', required=True)
-    parser.add_argument('-v', '--verbose', action='store_true', help='Print status to stdout')
-    parser.add_argument('-p', '--port', help='Listening port (ip:port or just port)')
-    parser.add_argument('-a', '--address', help='Listen address')
-    parser.add_argument('-d', '--debug', action="store_true",help="Dump API Data")
-    args = parser.parse_args()
-
-# Start up
-    f = finance(args)
-    if args.debug:
-        f.print_log(f'Running with config: ')
-        f.print_config()
-    f.start_server()
-
-# Track Updates
-    last_run = dict()
-    for name, source in f.sources.items():
-        last_run[name] = 0
-
-# Update in loop
-    while True:
-        for name, source in f.sources.items():
-            if time.time() - last_run[name] > source['interval']:
-                if args.verbose:
-                    f.print_log(f"Updating Source {name}")
-                f.update(source)
-                last_run[name] = time.time()
-        time.sleep(f.config['min_interval'])
+            log.info(f" - Updated {ticker} from {source['name']} in {duration}s")

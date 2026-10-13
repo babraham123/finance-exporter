@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finance-exporter"
+version = "0.2.0"
+description = "Prometheus exporter for market and rates data"
+requires-python = ">=3.10"
+dependencies = [
+    "jsonschema",
+    "pandas",
+    "prometheus_client",
+    "pyyaml",
+    "requests",
+    "yfinance",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+finance-exporter = "finance_exporter.cli:main"
+
+[tool.setuptools]
+packages = ["finance_exporter", "finance_exporter.plugins"]
+
+[tool.setuptools.package-data]
+finance_exporter = ["schema.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,8 +1,11 @@
 import csv
 import io
+import logging
 import re
 from datetime import datetime, timezone
-from .base import Plugin, date_to_epoch, http_get, log
+from .base import Plugin, date_to_epoch, http_get
+
+log = logging.getLogger(__name__)
 
 URL = 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/{year}/all'
 CURVES = {
@@ -39,7 +42,7 @@ class Treasury(Plugin):
         observation_time, yields = self.latest
         value = yields.get(symbol.upper())
         if value is None:
-            log(f"Tenor {symbol} not on the {self.curve} curve; available: {', '.join(yields)}")
+            log.warning(f"Tenor {symbol} not on the {self.curve} curve; available: {', '.join(yields)}")
             return None
         return {
             'value': value,

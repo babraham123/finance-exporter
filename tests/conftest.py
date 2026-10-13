@@ -1,7 +1,5 @@
-import importlib.util
 import json
 import os
-import sys
 import urllib.request
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -14,13 +12,9 @@ import yfinance
 from prometheus_client import CollectorRegistry
 from prometheus_client.parser import text_string_to_metric_families
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIXTURES = os.path.join(ROOT, 'tests', 'fixtures')
-sys.path.insert(0, ROOT)
+from finance_exporter.exporter import Exporter
 
-_spec = importlib.util.spec_from_file_location('finance_exporter', os.path.join(ROOT, 'finance-exporter.py'))
-finance_exporter = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(finance_exporter)
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
 
 TREASURY_CURVES = {'daily_treasury_yield_curve': 'nominal', 'daily_treasury_real_yield_curve': 'real'}
 
@@ -107,18 +101,17 @@ class FakeTicker:
         )
 
 
-class Exporter:
+class RunningExporter:
     """A running exporter on an ephemeral port with its own metric registry."""
 
     def __init__(self, config_path, http):
-        args = SimpleNamespace(config=config_path, verbose=False, debug=False, port=0, address='127.0.0.1')
         self.http = http
-        self.finance = finance_exporter.finance(args, registry=CollectorRegistry())
-        self.server = self.finance.start_server()
+        self.exporter = Exporter(config_path, port=0, address='127.0.0.1', registry=CollectorRegistry())
+        self.server = self.exporter.start_server()
 
     def poll(self):
-        for source in self.finance.sources.values():
-            self.finance.update(source)
+        for source in self.exporter.sources.values():
+            self.exporter.update(source)
 
     def scrape(self):
         """Samples from /metrics as {(name, frozenset(labels)): value}."""
@@ -153,8 +146,8 @@ def http(monkeypatch):
     monkeypatch.setattr(requests, 'get', fake.get)
     monkeypatch.setattr(yfinance, 'Ticker', FakeTicker)
     monkeypatch.setattr(FakeTicker, 'rate_limited', dict())
-    monkeypatch.setattr('includes.plugins.yahoo.time.sleep', lambda seconds: None)
-    monkeypatch.setattr('includes.plugins.alphavantage.time.sleep', lambda seconds: None)
+    monkeypatch.setattr('finance_exporter.plugins.yahoo.time.sleep', lambda seconds: None)
+    monkeypatch.setattr('finance_exporter.plugins.alphavantage.time.sleep', lambda seconds: None)
     return fake
 
 
@@ -165,7 +158,7 @@ def start_exporter(http, tmp_path):
     def start(config):
         path = tmp_path / 'config.yaml'
         path.write_text(config if isinstance(config, str) else yaml.safe_dump(config))
-        exporter = Exporter(str(path), http)
+        exporter = RunningExporter(str(path), http)
         exporters.append(exporter)
         return exporter
 

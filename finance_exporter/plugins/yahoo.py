@@ -1,8 +1,11 @@
+import logging
 import time
 import pandas as pd
 import yfinance as yf
 from yfinance.exceptions import YFRateLimitError
-from .base import Plugin, log
+from .base import Plugin
+
+log = logging.getLogger(__name__)
 
 ASSET_CLASSES = {
     'EQUITY': 'stock',
@@ -34,7 +37,7 @@ class Yahoo(Plugin):
                 if attempt == RETRIES:
                     raise
                 delay = BACKOFF_SECONDS * 2 ** attempt
-                log(f"Yahoo rate limited fetching {symbol}; retrying in {delay}s")
+                log.warning(f"Yahoo rate limited fetching {symbol}; retrying in {delay}s")
                 time.sleep(delay)
 
     def _fetch(self, symbol):
@@ -61,5 +64,5 @@ class Yahoo(Plugin):
                 fields.update({ name: column[row] for row, name in FUND_OPERATIONS.items() if row in column.index and pd.notna(column[row]) })
         except Exception as e:
             # Fund details are supplementary; keep the quote
-            log(f"Unable to fetch fund data for {symbol}: {e}")
+            log.warning(f"Unable to fetch fund data for {symbol}: {e}")
         return fields

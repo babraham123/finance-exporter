@@ -1,10 +1,8 @@
 FROM docker.io/python:3-slim-bookworm
 WORKDIR /usr/src/app
-COPY requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
+COPY pyproject.toml ./
+COPY finance_exporter ./finance_exporter
+RUN pip3 install --no-cache-dir .
 ENV CONFIG '/usr/src/app/finance-exporter.yaml'
 ENV OPTS ''
-COPY schema.yaml ./
-COPY includes ./includes
-COPY finance-exporter.py ./
-CMD ["sh", "-c", "python3 finance-exporter.py -f ${CONFIG} ${OPTS}"]
+CMD ["sh", "-c", "finance-exporter -f ${CONFIG} ${OPTS}"]
