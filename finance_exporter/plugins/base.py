@@ -17,7 +17,7 @@ def http_get(url, **params):
 
 
 class Plugin:
-    """A data source. fetch() returns a flat dict of fields for one symbol, or None if there is no data."""
+    """A data source for one configured source's tickers."""
 
     def __init__(self, source):
         self.source = source
@@ -29,8 +29,18 @@ class Plugin:
             raise Exception(f"Source {self.source['name']} requires api_key for the {self.source['plugin']} plugin")
         return key
 
-    def begin_poll(self):
-        """Called once before each poll of the source's tickers."""
+    def fetch_all(self, symbols):
+        """Yield (symbol, result) once per symbol, as each is fetched.
+
+        result is the quote (a flat dict of fields), None when the source has no data for the symbol,
+        or the exception that stopped this symbol. Raising instead fails every symbol not yet yielded.
+        """
+        for symbol in symbols:
+            try:
+                yield symbol, self.fetch(symbol)
+            except Exception as e:
+                yield symbol, e
 
     def fetch(self, symbol):
+        """One symbol's quote, or None if there is no data. Plugins that fetch every symbol at once override fetch_all instead."""
         raise NotImplementedError

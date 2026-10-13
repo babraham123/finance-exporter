@@ -51,10 +51,14 @@ class FakeHTTP:
         # Years before the current one (0 = this year) whose Treasury file has no rows yet
         self.empty_treasury_years = set()
         self.alphavantage_throttled = False
+        # Hosts that answer every request with a server error
+        self.failing_hosts = set()
 
     def get(self, url, params=None, timeout=None):
         params = params or dict()
         self.calls.append((url, params))
+        if any(host in url for host in self.failing_hosts):
+            return FakeResponse(500, 'server error')
         if 'stlouisfed.org' in url:
             kind = 'observations' if url.endswith('/observations') else 'series'
             return self._fixture(f"fred/{params['series_id']}_{kind}.json")

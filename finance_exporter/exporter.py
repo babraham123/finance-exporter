@@ -13,7 +13,8 @@ from .plugins import PLUGINS
 log = logging.getLogger(__name__)
 
 DEFAULT_LABELS = ['plugin', 'source', 'ticker']
-BUILTIN_METRICS = ('updates', 'quote_time', 'quote_histogram')
+BUILTIN_METRICS = ('updates', 'fetch_errors', 'poll_seconds')
+POLL_SECONDS_BUCKETS = (0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120)
 METRIC_TYPES = {'Counter': Counter, 'Gauge': Gauge, 'Histogram': Histogram, 'Summary': Summary}
 # Top-level keys removed when sources became independent, with how to migrate
 REMOVED_KEYS = {
@@ -40,14 +41,9 @@ class Exporter:
         self.label_cache = dict()
         self.prom_metrics = dict()
         self.prom_metrics['updates'] = Counter(self.metric_name('updates'), 'Number of ticker updates', DEFAULT_LABELS, registry=registry)
-        self.prom_metrics['quote_time'] = Gauge(self.metric_name('quote_time'), 'Time spent retrieving quote', DEFAULT_LABELS, registry=registry)
-        # Response time histogram should not include ticker
-        histogram_labels = [ label for label in DEFAULT_LABELS if label != 'ticker' ]
-        self.prom_metrics['quote_histogram'] = Histogram(self.metric_name('quote_histogram'),
-                                                         'Histogram of quote retrieval times',
-                                                         histogram_labels,
-                                                         buckets = list(range(1,21)),
-                                                         registry = registry)
+        self.prom_metrics['fetch_errors'] = Counter(self.metric_name('fetch_errors'), 'Number of failed ticker fetches', DEFAULT_LABELS, registry=registry)
+        self.prom_metrics['poll_seconds'] = Histogram(self.metric_name('poll_seconds'), 'Time to poll all of a source\'s tickers',
+                                                      ['plugin', 'source'], buckets=POLL_SECONDS_BUCKETS, registry=registry)
         self.init_metrics()
         log.info("Ready to Run...")
 
@@ -111,13 +107,6 @@ class Exporter:
         server, _ = start_http_server(int(self.config['port']), addr=self.config['address'], registry=self.registry)
         return server
 
-    def fetch_data(self, source, ticker):
-        try:
-            return source['handler'].fetch(ticker)
-        except Exception as e:
-            log.warning(f"Unable to fetch {ticker} from {source['name']}: {e}")
-        return None
-
     # Prepare labels using standard labels, label cache, and quote labels
     def quote_labels(self, source, ticker, quote):
         cache = self.label_cache.setdefault((source['name'], ticker), { label: '' for label in source['label_names'] })
@@ -140,37 +129,44 @@ class Exporter:
             return None
 
     def update(self, source):
+        start_time = time.monotonic()
+        pending = set(source['tickers'])
         try:
-            source['handler'].begin_poll()
+            for ticker, result in source['handler'].fetch_all(source['tickers']):
+                pending.discard(ticker)
+                if isinstance(result, Exception):
+                    self.fetch_failed(source, ticker, result)
+                elif result is None:
+                    log.info(f"No data for {ticker} from {source['name']}")
+                else:
+                    self.record(source, ticker, result)
         except Exception as e:
             log.warning(f"Unable to poll {source['name']}: {e}")
-            return
-        for ticker in source['tickers']:
-            log.info(f"Updating ticker {ticker} from {source['name']}")
-            start_time = time.time()
-            quote = self.fetch_data(source, ticker)
-            if quote is None:
+            for ticker in pending:
+                self.fetch_failed(source, ticker, e, quiet=True)
+        finally:
+            self.prom_metrics['poll_seconds'].labels(source=source['name'], plugin=source['plugin']).observe(time.monotonic() - start_time)
+
+    def fetch_failed(self, source, ticker, error, quiet=False):
+        if not quiet:
+            log.warning(f"Unable to fetch {ticker} from {source['name']}: {error}")
+        self.prom_metrics['fetch_errors'].labels(source=source['name'], plugin=source['plugin'], ticker=ticker).inc()
+
+    def record(self, source, ticker, quote):
+        log.debug(pformat(quote))
+        quote_info = self.quote_labels(source, ticker, quote)
+        default_info = { label: quote_info[label] for label in DEFAULT_LABELS }
+        self.prom_metrics['updates'].labels(**default_info).inc()
+        for name, metric in self.metrics.items():
+            if metric['source'] != source['name']:
                 continue
-            duration = time.time() - start_time
-            log.debug(pformat(quote))
-            quote_info = self.quote_labels(source, ticker, quote)
-            default_info = { label: quote_info[label] for label in DEFAULT_LABELS }
-            self.prom_metrics['updates'].labels(**default_info).inc()
-            self.prom_metrics['quote_time'].labels(**default_info).set(duration)
-            self.prom_metrics['quote_histogram'].labels(
-                source = source['name'],
-                plugin = source['plugin']
-            ).observe(duration)
-            for name, metric in self.metrics.items():
-                if metric['source'] != source['name']:
-                    continue
-                value = self.metric_value(name, metric, ticker, quote)
-                if value is None:
-                    continue
-                if metric['type'] == 'Counter':
-                    self.prom_metrics[name].labels(**quote_info).inc()
-                elif metric['type'] == 'Gauge':
-                    self.prom_metrics[name].labels(**quote_info).set(value)
-                elif metric['type'] in ('Histogram', 'Summary'):
-                    self.prom_metrics[name].labels(**quote_info).observe(value)
-            log.info(f" - Updated {ticker} from {source['name']} in {duration}s")
+            value = self.metric_value(name, metric, ticker, quote)
+            if value is None:
+                continue
+            if metric['type'] == 'Counter':
+                self.prom_metrics[name].labels(**quote_info).inc()
+            elif metric['type'] == 'Gauge':
+                self.prom_metrics[name].labels(**quote_info).set(value)
+            elif metric['type'] in ('Histogram', 'Summary'):
+                self.prom_metrics[name].labels(**quote_info).observe(value)
+        log.info(f"Updated {ticker} from {source['name']}")

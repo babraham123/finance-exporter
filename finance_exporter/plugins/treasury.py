@@ -1,11 +1,8 @@
 import csv
 import io
-import logging
 import re
 from datetime import datetime, timezone
 from .base import Plugin, date_to_epoch, http_get
-
-log = logging.getLogger(__name__)
 
 URL = 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/{year}/all'
 CURVES = {
@@ -29,27 +26,27 @@ class Treasury(Plugin):
     def __init__(self, source):
         super().__init__(source)
         self.curve = source.get('curve', 'nominal')
-        self.latest = None
 
-    def begin_poll(self):
+    def fetch_all(self, symbols):
         year = datetime.now(timezone.utc).year
         # The current year's file is empty until the first business day of January
-        self.latest = self._latest_row(year) or self._latest_row(year - 1)
-
-    def fetch(self, symbol):
-        if self.latest is None:
-            return None
-        observation_time, yields = self.latest
-        value = yields.get(symbol.upper())
-        if value is None:
-            log.warning(f"Tenor {symbol} not on the {self.curve} curve; available: {', '.join(yields)}")
-            return None
-        return {
-            'value': value,
-            'observation_time': observation_time,
-            'curve': self.curve,
-            'asset_class': 'treasury_yield',
-        }
+        latest = self._latest_row(year) or self._latest_row(year - 1)
+        if latest is None:
+            for symbol in symbols:
+                yield symbol, None
+            return
+        observation_time, yields = latest
+        for symbol in symbols:
+            value = yields.get(symbol.upper())
+            if value is None:
+                yield symbol, LookupError(f"Tenor {symbol} not on the {self.curve} curve; available: {', '.join(yields)}")
+                continue
+            yield symbol, {
+                'value': value,
+                'observation_time': observation_time,
+                'curve': self.curve,
+                'asset_class': 'treasury_yield',
+            }
 
     def _latest_row(self, year):
         text = http_get(URL.format(year=year), type=CURVES[self.curve], field_tdr_date_value=year, _format='csv').text

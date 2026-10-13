@@ -135,14 +135,30 @@ def test_failed_sources_and_tickers_do_not_stop_others(start_exporter, http, fre
     exporter.poll()
     samples = exporter.scrape()
 
-    # Yahoo retries through rate limiting; unknown symbols and tenors are skipped
+    # Yahoo retries through rate limiting
     assert find(samples, 'finance_current_price', ticker='SPY') is not None
-    assert find(samples, 'finance_updates_total', ticker='NOPE') is None
+    assert find(samples, 'finance_fetch_errors_total', ticker='SPY') is None
+    # Unknown symbols, tenors missing from the curve and throttled responses export nothing and count an error
+    for source, ticker in [('yahoo', 'NOPE'), ('treasury', '15Y'), ('alphavantage', 'IBM')]:
+        assert find(samples, 'finance_updates_total', source=source, ticker=ticker) is None
+        assert find(samples, 'finance_fetch_errors_total', source=source, ticker=ticker) == 1
     assert find(samples, 'finance_treasury_yield', ticker='10Y') is not None
-    assert find(samples, 'finance_treasury_yield', ticker='15Y') is None
-    # A throttled AlphaVantage response exports nothing for that ticker
     assert find(samples, 'finance_av_price') is None
-    assert find(samples, 'finance_updates_total', source='alphavantage') is None
+
+
+def test_source_wide_failure_counts_an_error_per_ticker(start_exporter, http):
+    http.failing_hosts = {'treasury.gov'}
+    exporter = start_exporter(config(treasury_source(tickers=['3M', '10Y']), yahoo_source(['AAPL'])))
+    exporter.poll()
+    samples = exporter.scrape()
+
+    assert find(samples, 'finance_fetch_errors_total', source='treasury', ticker='3M') == 1
+    assert find(samples, 'finance_fetch_errors_total', source='treasury', ticker='10Y') == 1
+    assert find(samples, 'finance_treasury_yield') is None
+    assert find(samples, 'finance_current_price', ticker='AAPL') is not None
+    # Every poll is timed per source, whether or not it succeeded
+    assert find(samples, 'finance_poll_seconds_count', source='treasury', plugin='treasury') == 1
+    assert find(samples, 'finance_poll_seconds_count', source='yahoo', plugin='yfinance') == 1
 
 
 def test_treasury_uses_previous_year_before_first_business_day(start_exporter, http):
