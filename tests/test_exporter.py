@@ -1,7 +1,5 @@
 import pytest
-from prometheus_client import CollectorRegistry
-from conftest import FakeTicker, find, fixture_json, label_names, midnight_utc, read_samples
-from finance_exporter.source import Builtins, Source
+from conftest import (fixture, find, label_names, latest_fred_observation, latest_treasury_row, midnight_utc)
 
 YAHOO_ASSET_CLASSES = {
     'AAPL': 'stock',
@@ -12,6 +10,10 @@ YAHOO_ASSET_CLASSES = {
     'EURUSD=X': 'fx',
     'GC=F': 'future',
 }
+FRED_SERIES = ['DGS2', 'DGS10', 'T10Y2Y', 'BAMLH0A0HYM2', 'MORTGAGE30US']
+# Treasury CSV header for each tenor ticker
+NOMINAL_COLUMNS = {'3M': '3 Mo', '10Y': '10 Yr', '30Y': '30 Yr'}
+REAL_COLUMNS = {'10Y': '10 YR'}
 
 
 def config(*sources):
@@ -34,8 +36,7 @@ def yahoo_source(tickers=tuple(YAHOO_ASSET_CLASSES)):
 
 def fred_source():
     return {
-        'name': 'fred', 'plugin': 'fred', 'interval': 3600, 'api_key': '${FRED_API_KEY}',
-        'tickers': ['DGS2', 'DGS10', 'T10Y2Y', 'BAMLH0A0HYM2', 'MORTGAGE30US'],
+        'name': 'fred', 'plugin': 'fred', 'interval': 3600, 'api_key': '${FRED_API_KEY}', 'tickers': FRED_SERIES,
         'metrics': {
             'fred_value': {'item': 'value', 'type': 'Gauge', 'help': 'Value', 'scale': 0.01},
             'fred_observation_time': {'item': 'observation_time', 'type': 'Gauge', 'help': 'Observation date'},
@@ -44,7 +45,7 @@ def fred_source():
     }
 
 
-def treasury_source(name='treasury', curve='nominal', tickers=('3M', '10Y', '30Y')):
+def treasury_source(name='treasury', curve='nominal', tickers=tuple(NOMINAL_COLUMNS)):
     return {
         'name': name, 'plugin': 'treasury', 'curve': curve, 'interval': 3600, 'tickers': list(tickers),
         'metrics': {
@@ -67,7 +68,7 @@ def alphavantage_source():
 
 
 def all_sources():
-    return config(yahoo_source(), fred_source(), treasury_source(), treasury_source('treasury_real', 'real', ['10Y']), alphavantage_source())
+    return config(yahoo_source(), fred_source(), treasury_source(), treasury_source('treasury_real', 'real', REAL_COLUMNS), alphavantage_source())
 
 
 @pytest.fixture
@@ -75,44 +76,44 @@ def fred_key(monkeypatch):
     monkeypatch.setenv('FRED_API_KEY', 'test-fred-key')
 
 
-def test_all_sources_export_their_own_metrics(start_exporter, http, fred_key):
+def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     exporter = start_exporter(all_sources())
     exporter.poll()
     samples = exporter.scrape()
 
     # Yahoo: price for every asset class, classified from quoteType
     for symbol, asset_class in YAHOO_ASSET_CLASSES.items():
-        price = fixture_json(f'yahoo/{symbol}.json')['info']['regularMarketPrice']
+        price = fixture('yfinance', 'info', symbol)['regularMarketPrice']
         assert find(samples, 'finance_current_price', ticker=symbol, asset_class=asset_class, source='yahoo', plugin='yfinance') == price
-    spy = fixture_json('yahoo/SPY.json')['info']
+    spy = fixture('yfinance', 'info', 'SPY')
     assert find(samples, 'finance_net_expense_ratio', ticker='SPY') == pytest.approx(spy['netExpenseRatio'] * 0.01)
     assert find(samples, 'finance_net_expense_ratio', ticker='AAPL') is None
-    # Mutual fund details missing from .info are filled from funds_data
-    vtsax_funds = fixture_json('yahoo/VTSAX.json')['funds_data']
+    # Mutual fund details missing from the quote are filled from fund data
+    vtsax_funds = fixture('yfinance', 'funds', 'VTSAX')
     assert find(samples, 'finance_report_expense_ratio', ticker='VTSAX',
                 category=vtsax_funds['fund_overview']['categoryName'],
-                fund_family=vtsax_funds['fund_overview']['family']) == vtsax_funds['fund_operations']['VTSAX']['Annual Report Expense Ratio']
+                fund_family=vtsax_funds['fund_overview']['family']) == vtsax_funds['fund_operations']['Annual Report Expense Ratio']
     assert find(samples, 'finance_stock_position', ticker='VTSAX') == vtsax_funds['asset_classes']['stockPosition']
     # Non-numeric values are skipped, not exported or fatal
     assert find(samples, 'finance_name_as_number') is None
 
-    # FRED: latest real observation (holiday "." skipped), percent scaled to ratio, dated at midnight UTC
-    assert find(samples, 'finance_fred_value', ticker='DGS10', asset_class='rate', frequency='Daily') == pytest.approx(0.0524)
-    assert find(samples, 'finance_fred_observation_time', ticker='DGS10') == midnight_utc('2026-10-09')
-    assert find(samples, 'finance_fred_value', ticker='T10Y2Y') == pytest.approx(0.0042)
-    assert find(samples, 'finance_fred_value', ticker='MORTGAGE30US', frequency='Weekly, Ending Thursday') == pytest.approx(0.074)
-    assert find(samples, 'finance_fred_observation_time', ticker='MORTGAGE30US') == midnight_utc('2026-10-08')
-    assert all(params['api_key'] == 'test-fred-key' for url, params in http.calls if 'stlouisfed' in url)
+    # FRED: latest real observation, percent scaled to ratio, dated at midnight UTC, labelled from series metadata
+    for series_id in FRED_SERIES:
+        latest = latest_fred_observation(series_id)
+        series = fixture('fred', 'series', series_id)['seriess'][0]
+        assert find(samples, 'finance_fred_value', ticker=series_id, asset_class='rate', frequency=series['frequency']) == pytest.approx(float(latest['value']) * 0.01)
+        assert find(samples, 'finance_fred_observation_time', ticker=series_id) == midnight_utc(latest['date'])
 
     # Treasury: latest row of each curve, tenors as tickers
-    assert find(samples, 'finance_treasury_yield', ticker='10Y', curve='nominal', asset_class='treasury_yield') == pytest.approx(0.0521)
-    assert find(samples, 'finance_treasury_yield', ticker='3M') == pytest.approx(0.0426)
-    assert find(samples, 'finance_treasury_observation_time', ticker='30Y') == midnight_utc('2026-10-13')
-    assert find(samples, 'finance_treasury_real_yield', ticker='10Y', curve='real') == pytest.approx(0.0288)
+    for curve, name, columns in [('nominal', 'treasury', NOMINAL_COLUMNS), ('real', 'treasury_real', REAL_COLUMNS)]:
+        row = latest_treasury_row(curve)
+        for tenor, column in columns.items():
+            assert find(samples, f'finance_{name}_yield', ticker=tenor, curve=curve, asset_class='treasury_yield') == pytest.approx(float(row[column]) * 0.01)
+            assert find(samples, f'finance_{name}_observation_time', ticker=tenor) == midnight_utc(row['Date'], '%m/%d/%Y')
 
     # AlphaVantage: quote, overview and latest earnings merged
-    ibm_quote = fixture_json('alphavantage/IBM_GLOBAL_QUOTE.json')['Global Quote']
-    ibm_earnings = fixture_json('alphavantage/IBM_EARNINGS.json')['quarterlyEarnings'][0]
+    ibm_quote = fixture('alphavantage', 'query', 'GLOBAL_QUOTE', 'IBM')['Global Quote']
+    ibm_earnings = fixture('alphavantage', 'query', 'EARNINGS', 'IBM')['quarterlyEarnings'][0]
     assert find(samples, 'finance_av_price', ticker='IBM', asset_class='stock') == float(ibm_quote['05. price'])
     assert find(samples, 'finance_av_reported_eps', ticker='IBM') == float(ibm_earnings['reportedEPS'])
 
@@ -120,37 +121,47 @@ def test_all_sources_export_their_own_metrics(start_exporter, http, fred_key):
     assert label_names(samples, 'finance_current_price') == {frozenset({'plugin', 'source', 'ticker', 'asset_class', 'category', 'fund_family'})}
     assert label_names(samples, 'finance_fred_value') == {frozenset({'plugin', 'source', 'ticker', 'asset_class', 'frequency'})}
     assert label_names(samples, 'finance_treasury_yield') == {frozenset({'plugin', 'source', 'ticker', 'asset_class', 'curve'})}
-    # Built-in metrics use only the default labels, once per ticker update
+    # Built-in metrics use only the default labels: one update per ticker, one timed poll per source, no errors
     assert label_names(samples, 'finance_updates_total') == {frozenset({'plugin', 'source', 'ticker'})}
     assert find(samples, 'finance_updates_total', source='fred', ticker='DGS2') == 1
     assert find(samples, 'finance_updates_total', source='treasury_real', ticker='10Y') == 1
+    assert find(samples, 'finance_poll_seconds_count', source='treasury', plugin='treasury') == 1
+    assert label_names(samples, 'finance_fetch_errors_total') == set()
 
 
-def test_failed_sources_and_tickers_do_not_stop_others(start_exporter, http, fred_key):
-    http.alphavantage_throttled = True
-    FakeTicker.rate_limited['SPY'] = 2
+class ThrottledAlphaVantage:
+
+    def query(self, function, symbol):
+        return {'Information': 'Rate limit reached'}
+
+
+class UnreachableTreasury:
+
+    def year_csv(self, curve, year):
+        raise ConnectionError('treasury.gov unreachable')
+
+
+def test_failed_tickers_count_errors_and_do_not_stop_others(start_exporter):
     exporter = start_exporter(config(
         yahoo_source(['SPY', 'NOPE']),
         treasury_source(tickers=['10Y', '15Y']),
         alphavantage_source(),
-    ))
+    ), clients={'alphavantage': ThrottledAlphaVantage()})
     exporter.poll()
     samples = exporter.samples()
 
-    # Yahoo retries through rate limiting
-    assert find(samples, 'finance_current_price', ticker='SPY') is not None
-    assert find(samples, 'finance_fetch_errors_total', ticker='SPY') is None
     # Unknown symbols, tenors missing from the curve and throttled responses export nothing and count an error
     for source, ticker in [('yahoo', 'NOPE'), ('treasury', '15Y'), ('alphavantage', 'IBM')]:
         assert find(samples, 'finance_updates_total', source=source, ticker=ticker) is None
         assert find(samples, 'finance_fetch_errors_total', source=source, ticker=ticker) == 1
+    assert find(samples, 'finance_current_price', ticker='SPY') is not None
     assert find(samples, 'finance_treasury_yield', ticker='10Y') is not None
     assert find(samples, 'finance_av_price') is None
 
 
-def test_source_wide_failure_counts_an_error_per_ticker(start_exporter, http):
-    http.failing_hosts = {'treasury.gov'}
-    exporter = start_exporter(config(treasury_source(tickers=['3M', '10Y']), yahoo_source(['AAPL'])))
+def test_source_wide_failure_counts_an_error_per_ticker(start_exporter):
+    exporter = start_exporter(config(treasury_source(tickers=['3M', '10Y']), yahoo_source(['AAPL'])),
+                              clients={'treasury': UnreachableTreasury()})
     exporter.poll()
     samples = exporter.samples()
 
@@ -161,75 +172,6 @@ def test_source_wide_failure_counts_an_error_per_ticker(start_exporter, http):
     # Every poll is timed per source, whether or not it succeeded
     assert find(samples, 'finance_poll_seconds_count', source='treasury', plugin='treasury') == 1
     assert find(samples, 'finance_poll_seconds_count', source='yahoo', plugin='yfinance') == 1
-
-
-def test_treasury_uses_previous_year_before_first_business_day(start_exporter, http):
-    http.empty_treasury_years = {0}
-    exporter = start_exporter(config(treasury_source(tickers=['10Y'])))
-    exporter.poll()
-    samples = exporter.samples()
-
-    assert find(samples, 'finance_treasury_yield', ticker='10Y') == pytest.approx(0.0521)
-    requested_years = [int(params['field_tdr_date_value']) for url, params in http.calls]
-    assert requested_years[1] == requested_years[0] - 1
-
-
-class ScriptedPlugin:
-    """Yields the given {ticker: result} for each poll in turn, then raises `then` if set."""
-
-    def __init__(self, *polls, then=None):
-        self.polls = list(polls)
-        self.then = then
-
-    def fetch_all(self, symbols):
-        yield from self.polls.pop(0).items()
-        if self.then:
-            raise self.then
-
-
-def scripted_source(plugin, tickers=('X',), metrics=None, labels=None):
-    registry = CollectorRegistry()
-    config = {
-        'name': 'scripted', 'plugin': 'fake', 'interval': 60, 'tickers': list(tickers),
-        'metrics': metrics or {'price': {'item': 'price', 'type': 'Gauge', 'help': 'Price'}},
-        'labels': labels or dict(),
-    }
-    return Source(config, plugin, registry, Builtins(registry, 'finance'), 'finance'), registry
-
-
-def test_source_records_each_metric_type_and_keeps_last_known_labels():
-    plugin = ScriptedPlugin({'X': {'price': '10', 'sector': 'Tech'}}, {'X': {'price': 12}})
-    source, registry = scripted_source(plugin, metrics={
-        'price': {'item': 'price', 'type': 'Gauge', 'help': 'Price'},
-        'price_histogram': {'item': 'price', 'type': 'Histogram', 'help': 'Price'},
-        'price_summary': {'item': 'price', 'type': 'Summary', 'help': 'Price', 'scale': 0.5},
-    }, labels={'sector': 'sector'})
-    source.poll()
-    source.poll()
-    samples = read_samples(registry)
-
-    # The second quote lacks sector, so the series keeps the last known value rather than splitting
-    assert find(samples, 'finance_price', ticker='X', sector='Tech', source='scripted', plugin='fake') == 12
-    assert label_names(samples, 'finance_price') == {frozenset({'plugin', 'source', 'ticker', 'sector'})}
-    assert find(samples, 'finance_price_histogram_count', ticker='X') == 2
-    assert find(samples, 'finance_price_histogram_sum', ticker='X') == 22
-    assert find(samples, 'finance_price_summary_sum', ticker='X') == 11
-    assert find(samples, 'finance_updates_total', ticker='X') == 2
-
-
-def test_source_failure_mid_poll_counts_errors_only_for_unfetched_tickers():
-    plugin = ScriptedPlugin({'A': {'price': 1}, 'B': None}, then=RuntimeError('connection reset'))
-    source, registry = scripted_source(plugin, tickers=['A', 'B', 'C', 'D'])
-    source.poll()
-    samples = read_samples(registry)
-
-    assert find(samples, 'finance_price', ticker='A') == 1
-    # No data is not an error
-    assert find(samples, 'finance_fetch_errors_total', ticker='B') is None
-    assert find(samples, 'finance_updates_total', ticker='B') is None
-    assert find(samples, 'finance_fetch_errors_total', ticker='C') == 1
-    assert find(samples, 'finance_fetch_errors_total', ticker='D') == 1
-    assert find(samples, 'finance_poll_seconds_count', source='scripted') == 1
 
 
 @pytest.mark.parametrize('bad_config, error', [

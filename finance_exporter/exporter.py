@@ -18,10 +18,17 @@ REMOVED_KEYS = {
 }
 
 
-class Exporter:
-    """Builds every configured source against one registry and serves it."""
+def live_plugin(plugin_class, source):
+    return plugin_class(source, plugin_class.live_client(source))
 
-    def __init__(self, config_path, port=None, address=None, registry=REGISTRY):
+
+class Exporter:
+    """Builds every configured source against one registry and serves it.
+
+    make_plugin(plugin_class, source) builds each source's plugin; tests pass one that replays recorded responses.
+    """
+
+    def __init__(self, config_path, port=None, address=None, registry=REGISTRY, make_plugin=live_plugin):
         self.registry = registry
         self.config = self.load_config(config_path)
         # Command-line values take precedence over the config file
@@ -34,7 +41,7 @@ class Exporter:
         prefix = self.config.get('metric_prefix')
         builtins = Builtins(registry, prefix)
         self.sources = {
-            source['name']: Source(source, PLUGINS[source['plugin']](source), registry, builtins, prefix)
+            source['name']: Source(source, make_plugin(PLUGINS[source['plugin']], source), registry, builtins, prefix)
             for source in self.config['sources']
         }
 

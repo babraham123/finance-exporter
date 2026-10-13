@@ -1,0 +1,18 @@
+{
+ "asset_classes": {
+  "bondPosition": 0.0,
+  "cashPosition": 0.0019,
+  "convertiblePosition": 0.0,
+  "otherPosition": 0.0004,
+  "preferredPosition": 0.0,
+  "stockPosition": 0.9978
+ },
+ "fund_operations": {
+  "Annual Report Expense Ratio": 0.0004
+ },
+ "fund_overview": {
+  "categoryName": "Large Blend",
+  "family": "Vanguard",
+  "legalType": null
+ }
+}

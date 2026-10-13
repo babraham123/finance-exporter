@@ -1,12 +1,22 @@
+import time
 from datetime import datetime, timezone
+
 import requests
 
 HTTP_TIMEOUT = 30
 
 
+class RateLimited(Exception):
+    """The provider asked us to slow down."""
+
+
 def date_to_epoch(date_string, fmt='%Y-%m-%d'):
     """Midnight UTC of a date, as a Unix timestamp."""
     return datetime.strptime(date_string, fmt).replace(tzinfo=timezone.utc).timestamp()
+
+
+def utc_today():
+    return datetime.now(timezone.utc).date()
 
 
 def http_get(url, **params):
@@ -17,10 +27,22 @@ def http_get(url, **params):
 
 
 class Plugin:
-    """A data source for one configured source's tickers."""
+    """A data source for one configured source's tickers.
 
-    def __init__(self, source):
+    All I/O goes through `client`, whose live implementation comes from live_client(); tests replay recorded
+    responses through the same methods. `sleep` and `today` stand in for the clock.
+    """
+
+    def __init__(self, source, client, sleep=time.sleep, today=utc_today):
         self.source = source
+        self.client = client
+        self.sleep = sleep
+        self.today = today
+
+    @classmethod
+    def live_client(cls, source):
+        """The client that talks to the real provider."""
+        raise NotImplementedError
 
     def require_api_key(self):
         key = self.source.get('api_key')

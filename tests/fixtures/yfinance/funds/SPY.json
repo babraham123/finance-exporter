@@ -1,0 +1,20 @@
+{
+ "asset_classes": {
+  "bondPosition": 0.0,
+  "cashPosition": 0.0025,
+  "convertiblePosition": 0.0,
+  "otherPosition": 0.0,
+  "preferredPosition": 0.0,
+  "stockPosition": 0.9975
+ },
+ "fund_operations": {
+  "Annual Holdings Turnover": 0.03,
+  "Annual Report Expense Ratio": 0.000945,
+  "Total Net Assets": 542460.75
+ },
+ "fund_overview": {
+  "categoryName": "Large Blend",
+  "family": "State Street Investment Management",
+  "legalType": "Exchange Traded Fund"
+ }
+}

@@ -1,7 +1,7 @@
 import csv
 import io
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from .base import Plugin, date_to_epoch, http_get
 
 URL = 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/{year}/all'
@@ -21,14 +21,25 @@ def tenor(column):
     return match.group(1) + ('M' if match.group(2).lower().startswith('mo') else 'Y')
 
 
+class TreasuryClient:
+
+    def year_csv(self, curve, year):
+        """Every business day's par yields on the curve for one year, as CSV text."""
+        return http_get(URL.format(year=year), type=CURVES[curve], field_tdr_date_value=year, _format='csv').text
+
+
 class Treasury(Plugin):
 
-    def __init__(self, source):
-        super().__init__(source)
+    def __init__(self, source, client, **kwargs):
+        super().__init__(source, client, **kwargs)
         self.curve = source.get('curve', 'nominal')
 
+    @classmethod
+    def live_client(cls, source):
+        return TreasuryClient()
+
     def fetch_all(self, symbols):
-        year = datetime.now(timezone.utc).year
+        year = self.today().year
         # The current year's file is empty until the first business day of January
         latest = self._latest_row(year) or self._latest_row(year - 1)
         if latest is None:
@@ -49,8 +60,7 @@ class Treasury(Plugin):
             }
 
     def _latest_row(self, year):
-        text = http_get(URL.format(year=year), type=CURVES[self.curve], field_tdr_date_value=year, _format='csv').text
-        rows = list(csv.DictReader(io.StringIO(text)))
+        rows = list(csv.DictReader(io.StringIO(self.client.year_csv(self.curve, year))))
         if not rows:
             return None
         row = max(rows, key=lambda r: datetime.strptime(r['Date'], DATE_FORMAT))

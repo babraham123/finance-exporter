@@ -1,108 +1,51 @@
+import csv
+import io
 import json
 import os
 import urllib.request
-from datetime import datetime, timezone
-from types import SimpleNamespace
+from datetime import date, datetime, timezone
 
-import pandas as pd
 import pytest
-import requests
 import yaml
-import yfinance
 from prometheus_client import CollectorRegistry
 from prometheus_client.parser import text_string_to_metric_families
 
+from clients import FIXTURES, Replay, fixture_path
 from finance_exporter.exporter import Exporter
 
-FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
+with open(os.path.join(FIXTURES, 'recorded_on.txt')) as _fd:
+    RECORDED_ON = date.fromisoformat(_fd.read().strip())
 
-TREASURY_CURVES = {'daily_treasury_yield_curve': 'nominal', 'daily_treasury_real_yield_curve': 'real'}
 
-
-def fixture_text(path):
-    with open(os.path.join(FIXTURES, path)) as fd:
+def fixture(plugin, method, *args):
+    """A recorded response, exactly as the live client returned it."""
+    path = fixture_path(plugin, method, args, '.json')
+    if os.path.exists(path):
+        with open(path) as fd:
+            return json.load(fd)
+    with open(fixture_path(plugin, method, args, '.csv')) as fd:
         return fd.read()
 
 
-def fixture_json(path):
-    return json.loads(fixture_text(path))
+def midnight_utc(date_string, fmt='%Y-%m-%d'):
+    return datetime.strptime(date_string, fmt).replace(tzinfo=timezone.utc).timestamp()
 
 
-def midnight_utc(date_string):
-    return datetime.strptime(date_string, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp()
+def latest_fred_observation(series_id):
+    """Newest observation with a value; FRED lists newest first and marks holidays '.'."""
+    return next(o for o in fixture('fred', 'observations', series_id)['observations'] if o['value'] != '.')
 
 
-class FakeResponse:
-
-    def __init__(self, status_code, text):
-        self.status_code = status_code
-        self.ok = 200 <= status_code < 300
-        self.text = text
-
-    def json(self):
-        return json.loads(self.text)
+def latest_treasury_row(curve):
+    rows = csv.DictReader(io.StringIO(fixture('treasury', 'year_csv', curve, RECORDED_ON.year)))
+    return max(rows, key=lambda row: datetime.strptime(row['Date'], '%m/%d/%Y'))
 
 
-class FakeHTTP:
-    """Serves recorded fixtures in place of the FRED, Treasury and AlphaVantage APIs."""
+class Sleeps(list):
+    """A sleep() that records requested delays instead of waiting."""
 
-    def __init__(self):
-        self.calls = list()
-        # Years before the current one (0 = this year) whose Treasury file has no rows yet
-        self.empty_treasury_years = set()
-        self.alphavantage_throttled = False
-        # Hosts that answer every request with a server error
-        self.failing_hosts = set()
-
-    def get(self, url, params=None, timeout=None):
-        params = params or dict()
-        self.calls.append((url, params))
-        if any(host in url for host in self.failing_hosts):
-            return FakeResponse(500, 'server error')
-        if 'stlouisfed.org' in url:
-            kind = 'observations' if url.endswith('/observations') else 'series'
-            return self._fixture(f"fred/{params['series_id']}_{kind}.json")
-        if 'treasury.gov' in url:
-            years_ago = datetime.now(timezone.utc).year - int(params['field_tdr_date_value'])
-            if years_ago in self.empty_treasury_years:
-                return FakeResponse(200, '')
-            return self._fixture(f"treasury/{TREASURY_CURVES[params['type']]}.csv")
-        if 'alphavantage.co' in url:
-            if self.alphavantage_throttled:
-                return FakeResponse(200, json.dumps({'Information': 'Rate limit reached'}))
-            return self._fixture(f"alphavantage/{params['symbol']}_{params['function']}.json")
-        raise AssertionError(f'Unexpected request to {url}')
-
-    def _fixture(self, path):
-        try:
-            return FakeResponse(200, fixture_text(path))
-        except FileNotFoundError:
-            return FakeResponse(404, f'no fixture {path}')
-
-
-class FakeTicker:
-    """Stands in for yfinance.Ticker using recorded fixtures."""
-    rate_limited = dict()
-
-    def __init__(self, symbol):
-        self.symbol = symbol
-        self.fixture = fixture_json(f'yahoo/{symbol}.json')
-
-    @property
-    def info(self):
-        if FakeTicker.rate_limited.get(self.symbol, 0) > 0:
-            FakeTicker.rate_limited[self.symbol] -= 1
-            raise yfinance.exceptions.YFRateLimitError()
-        return self.fixture['info']
-
-    @property
-    def funds_data(self):
-        funds = self.fixture['funds_data']
-        return SimpleNamespace(
-            fund_overview=funds['fund_overview'],
-            asset_classes=funds['asset_classes'],
-            fund_operations=pd.DataFrame(funds['fund_operations']),
-        )
+    def __call__(self, seconds):
+        self.append(seconds)
 
 
 def read_samples(registry):
@@ -115,12 +58,21 @@ def read_samples(registry):
 
 
 class ExporterUnderTest:
-    """An exporter with its own metric registry; its HTTP server starts only when scraped."""
+    """An exporter whose plugins replay recorded responses, with its own metric registry.
 
-    def __init__(self, config_path, http):
-        self.http = http
+    `clients` replaces the replayed client for the named plugins. The HTTP server starts only when scraped.
+    """
+
+    def __init__(self, config_path, clients=None):
+        clients = clients or dict()
+        self.sleeps = Sleeps()
         self.registry = CollectorRegistry()
-        self.exporter = Exporter(config_path, port=0, address='127.0.0.1', registry=self.registry)
+
+        def make_plugin(plugin_class, source):
+            client = clients.get(source['plugin']) or Replay(source['plugin'])
+            return plugin_class(source, client, sleep=self.sleeps, today=lambda: RECORDED_ON)
+
+        self.exporter = Exporter(config_path, port=0, address='127.0.0.1', registry=self.registry, make_plugin=make_plugin)
 
     def poll(self):
         for source in self.exporter.sources.values():
@@ -158,22 +110,10 @@ def label_names(samples, name):
 
 
 @pytest.fixture
-def http(monkeypatch):
-    fake = FakeHTTP()
-    monkeypatch.setattr(requests, 'get', fake.get)
-    monkeypatch.setattr(yfinance, 'Ticker', FakeTicker)
-    monkeypatch.setattr(FakeTicker, 'rate_limited', dict())
-    monkeypatch.setattr('finance_exporter.plugins.yahoo.time.sleep', lambda seconds: None)
-    monkeypatch.setattr('finance_exporter.plugins.alphavantage.time.sleep', lambda seconds: None)
-    return fake
-
-
-@pytest.fixture
-def start_exporter(http, tmp_path):
-    def start(config):
+def start_exporter(tmp_path):
+    def start(config, clients=None):
         path = tmp_path / 'config.yaml'
         path.write_text(config if isinstance(config, str) else yaml.safe_dump(config))
-        exporter = ExporterUnderTest(str(path), http)
-        return exporter
+        return ExporterUnderTest(str(path), clients)
 
     return start

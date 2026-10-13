@@ -5,18 +5,35 @@ BASE_URL = 'https://api.stlouisfed.org/fred'
 LOOKBACK = 10
 
 
+class FredClient:
+
+    def __init__(self, api_key):
+        self.api_key = api_key
+
+    def series(self, series_id):
+        return self._get('series', series_id=series_id)
+
+    def observations(self, series_id):
+        return self._get('series/observations', series_id=series_id, sort_order='desc', limit=LOOKBACK)
+
+    def _get(self, path, **params):
+        return http_get(f'{BASE_URL}/{path}', api_key=self.api_key, file_type='json', **params).json()
+
+
 class Fred(Plugin):
 
-    def __init__(self, source):
-        super().__init__(source)
-        self.api_key = self.require_api_key()
-        self.series = dict()
+    def __init__(self, source, client, **kwargs):
+        super().__init__(source, client, **kwargs)
+        self.require_api_key()
+
+    @classmethod
+    def live_client(cls, source):
+        return FredClient(source.get('api_key'))
 
     def fetch(self, symbol):
-        if symbol not in self.series:
-            self.series[symbol] = self._get('series', series_id=symbol)['seriess'][0]
-        series = self.series[symbol]
-        observations = self._get('series/observations', series_id=symbol, sort_order='desc', limit=LOOKBACK)['observations']
+        # Fetched every poll so renamed or re-based series show up without a restart
+        series = self.client.series(symbol)['seriess'][0]
+        observations = self.client.observations(symbol)['observations']
         latest = next((o for o in observations if o['value'] != '.'), None)
         if latest is None:
             return None
@@ -28,6 +45,3 @@ class Fred(Plugin):
             'units': series['units'],
             'asset_class': 'rate' if series['units'] == 'Percent' else 'economic_indicator',
         }
-
-    def _get(self, path, **params):
-        return http_get(f'{BASE_URL}/{path}', api_key=self.api_key, file_type='json', **params).json()
