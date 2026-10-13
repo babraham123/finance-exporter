@@ -18,14 +18,14 @@ class AlphaVantageClient:
 
 class AlphaVantage(Plugin):
     """Free tier allows 25 requests/day, and each fetch makes 3."""
-
-    def __init__(self, source, client, **kwargs):
-        super().__init__(source, client, **kwargs)
-        self.require_api_key()
+    SETTINGS = {
+        'properties': {'api_key': {'type': 'string', 'minLength': 1, 'secret': True, 'description': 'May reference an environment variable, e.g. ${ALPHAVANTAGE_API_KEY}'}},
+        'required': ['api_key'],
+    }
 
     @classmethod
-    def live_client(cls, source):
-        return AlphaVantageClient(source.get('api_key'))
+    def live_client(cls, settings):
+        return AlphaVantageClient(settings['api_key'])
 
     def fetch(self, symbol):
         quote = self._query('GLOBAL_QUOTE', symbol).get('Global Quote') or dict()

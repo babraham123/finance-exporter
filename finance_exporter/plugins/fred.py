@@ -21,14 +21,14 @@ class FredClient:
 
 
 class Fred(Plugin):
-
-    def __init__(self, source, client, **kwargs):
-        super().__init__(source, client, **kwargs)
-        self.require_api_key()
+    SETTINGS = {
+        'properties': {'api_key': {'type': 'string', 'minLength': 1, 'secret': True, 'description': 'May reference an environment variable, e.g. ${FRED_API_KEY}'}},
+        'required': ['api_key'],
+    }
 
     @classmethod
-    def live_client(cls, source):
-        return FredClient(source.get('api_key'))
+    def live_client(cls, settings):
+        return FredClient(settings['api_key'])
 
     def fetch(self, symbol):
         # Fetched every poll so renamed or re-based series show up without a restart

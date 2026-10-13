@@ -3,6 +3,7 @@ import logging
 import time
 from pprint import pformat
 
+from .config import load_config
 from .exporter import Exporter
 
 log = logging.getLogger(__name__)
@@ -23,8 +24,9 @@ def main(argv=None):
     level = logging.DEBUG if args.debug else logging.INFO if args.verbose else logging.WARNING
     logging.basicConfig(level=level, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
-    exporter = Exporter(args.config, port=args.port, address=args.address)
-    log.debug(f'Running with config:\n{pformat(exporter.redacted_config())}')
+    config = load_config(args.config, port=args.port, address=args.address)
+    log.debug(f'Running with config:\n{pformat(config.redacted())}')
+    exporter = Exporter(config)
     exporter.start_server()
 
     last_run = { name: 0 for name in exporter.sources }
@@ -34,4 +36,4 @@ def main(argv=None):
                 log.info(f"Updating Source {name}")
                 source.poll()
                 last_run[name] = time.time()
-        time.sleep(exporter.config['min_interval'])
+        time.sleep(config.min_interval)

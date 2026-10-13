@@ -11,6 +11,7 @@ from prometheus_client import CollectorRegistry
 from prometheus_client.parser import text_string_to_metric_families
 
 from clients import FIXTURES, Replay, fixture_path
+from finance_exporter.config import load_config
 from finance_exporter.exporter import Exporter
 
 with open(os.path.join(FIXTURES, 'recorded_on.txt')) as _fd:
@@ -69,10 +70,11 @@ class ExporterUnderTest:
         self.registry = CollectorRegistry()
 
         def make_plugin(plugin_class, source):
-            client = clients.get(source['plugin']) or Replay(source['plugin'])
-            return plugin_class(source, client, sleep=self.sleeps, today=lambda: RECORDED_ON)
+            client = clients.get(source.plugin) or Replay(source.plugin)
+            return plugin_class(source.settings, client, sleep=self.sleeps, today=lambda: RECORDED_ON)
 
-        self.exporter = Exporter(config_path, port=0, address='127.0.0.1', registry=self.registry, make_plugin=make_plugin)
+        self.config = load_config(config_path, port=0, address='127.0.0.1')
+        self.exporter = Exporter(self.config, registry=self.registry, make_plugin=make_plugin)
 
     def poll(self):
         for source in self.exporter.sources.values():

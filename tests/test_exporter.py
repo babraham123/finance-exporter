@@ -182,7 +182,8 @@ def test_source_wide_failure_counts_an_error_per_ticker(start_exporter):
     (lambda: config({k: v for k, v in fred_source().items() if k != 'api_key'}), "'api_key' is a required property"),
     (lambda: config({**yahoo_source(), 'plugin': 'iexcloud'}), "'iexcloud' is not one of"),
     (lambda: config({**yahoo_source(), 'metrics': {'price': {'item': 'regularMarketPrice', 'type': 'Counter', 'help': 'Price'}}}), "'Counter' is not one of"),
-    (lambda: config({**yahoo_source(), 'curve': 'real'}), 'Invalid config at sources/0'),
+    (lambda: config({**yahoo_source(), 'curve': 'real'}), "Invalid config at sources/0: Additional properties are not allowed \\('curve' was unexpected\\)"),
+    (lambda: config({**treasury_source(), 'curve': 'zero'}), "Invalid config at sources/0/curve: 'zero' is not one of"),
     (lambda: config(treasury_source(), {**treasury_source(), 'name': 'other'}), 'metric names must be unique across sources'),
     (lambda: config(yahoo_source(), {**yahoo_source(['SPY']), 'metrics': {}}), 'used more than once'),
 ])
@@ -191,7 +192,19 @@ def test_invalid_configs_are_rejected(start_exporter, bad_config, error):
         start_exporter(bad_config())
 
 
-def test_fred_requires_api_key_in_environment(start_exporter, monkeypatch):
+def test_unset_environment_variables_are_rejected(start_exporter, monkeypatch):
     monkeypatch.delenv('FRED_API_KEY', raising=False)
-    with pytest.raises(Exception, match='requires api_key'):
+    with pytest.raises(Exception, match=r'Environment variable FRED_API_KEY is not set \(used at sources/0/api_key\)'):
         start_exporter(config(fred_source()))
+
+
+def test_config_fills_plugin_defaults_and_redacts_secrets(start_exporter, fred_key):
+    treasury = {k: v for k, v in treasury_source().items() if k != 'curve'}
+    exporter = start_exporter(config(treasury, fred_source()))
+    treasury_config, fred_config = exporter.config.sources
+
+    assert treasury_config.settings == {'curve': 'nominal'}
+    assert fred_config.settings == {'api_key': 'test-fred-key'}
+    redacted = exporter.config.redacted()
+    assert redacted['sources'][1]['api_key'] == '<redacted>'
+    assert redacted['sources'][0]['curve'] == 'nominal'

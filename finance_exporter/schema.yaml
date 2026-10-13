@@ -41,6 +41,7 @@ properties:
 
 definitions:
 
+  # Fields every source shares. Each plugin's SETTINGS add its own fields (e.g. api_key, curve) when the config is loaded.
   source:
     type: object
     additionalProperties: false
@@ -60,19 +61,8 @@ definitions:
         type: integer
       plugin:
         title: Data API Plugin
-        description: Name of plugin to retrieve data. Allowed values are filled in from the plugin registry (includes/plugins).
+        description: Name of plugin to retrieve data. Allowed values, and each plugin's own settings, come from the plugin registry (finance_exporter/plugins).
         type: string
-      api_key:
-        title: API Key for plugin
-        description: API Key, required for fred and alphavantage. May reference an environment variable, e.g. ${FRED_API_KEY}
-        type: string
-      curve:
-        title: Treasury yield curve
-        description: Which daily Treasury par yield curve to read (treasury plugin only). Defaults to nominal.
-        type: string
-        enum:
-          - nominal
-          - real
       tickers:
         title: Symbols to poll from this source
         description: Yahoo symbols, FRED series IDs, Treasury tenors (e.g. 10Y), or AlphaVantage symbols, depending on plugin
@@ -95,23 +85,6 @@ definitions:
         patternProperties:
           ^\w+$:
             type: string
-    allOf:
-      - if:
-          properties:
-            plugin:
-              enum: [fred, alphavantage]
-        then:
-          required:
-            - api_key
-      - if:
-          not:
-            properties:
-              plugin:
-                const: treasury
-        then:
-          not:
-            required:
-              - curve
 
   metric:
     title: Metric configuration

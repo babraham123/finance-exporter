@@ -35,19 +35,20 @@ class Source:
     """One configured source: polls its plugin for its tickers and records the quotes as its own metrics."""
 
     def __init__(self, config, plugin, registry, builtins, prefix=None):
-        self.name = config['name']
-        self.plugin_name = config['plugin']
-        self.interval = config['interval']
-        self.tickers = list(config['tickers'])
+        """config is a SourceConfig; plugin anything with fetch_all(symbols)."""
+        self.name = config.name
+        self.plugin_name = config.plugin
+        self.interval = config.interval
+        self.tickers = list(config.tickers)
         self.plugin = plugin
         self.builtins = builtins
-        self.labels = config.get('labels') or dict()
+        self.labels = config.labels
         self.label_names = list(DEFAULT_LABELS) + [ label for label in self.labels if label not in DEFAULT_LABELS ]
-        self.metrics = dict()
-        for name, spec in config['metrics'].items():
-            metric_class, record = METRIC_TYPES[spec['type']]
-            metric = metric_class(metric_name(prefix, name), spec['help'], self.label_names, registry=registry)
-            self.metrics[name] = (spec, metric, record)
+        self.metrics = list()
+        for spec in config.metrics:
+            metric_class, record = METRIC_TYPES[spec.type]
+            metric = metric_class(metric_name(prefix, spec.name), spec.help, self.label_names, registry=registry)
+            self.metrics.append((spec, metric, record))
         # Last known label values per ticker, so a quote missing a label field doesn't split the series
         self.label_cache = dict()
 
@@ -83,18 +84,18 @@ class Source:
         labels.update(self._default_labels(ticker))
         labels.update({ label: str(quote[field]) for label, field in self.labels.items() if quote.get(field) is not None })
         self.builtins.updates.labels(**self._default_labels(ticker)).inc()
-        for name, (spec, metric, record) in self.metrics.items():
-            value = self._value(name, spec, ticker, quote)
+        for spec, metric, record in self.metrics:
+            value = self._value(spec, ticker, quote)
             if value is not None:
                 record(metric.labels(**labels), value)
         log.info(f'Updated {ticker} from {self.name}')
 
-    def _value(self, name, spec, ticker, quote):
-        value = quote.get(spec['item'])
+    def _value(self, spec, ticker, quote):
+        value = quote.get(spec.item)
         if value is None:
             return None
         try:
-            return float(value) * spec.get('scale', 1)
+            return float(value) * spec.scale
         except (TypeError, ValueError):
-            log.debug(f'Skipping {name} for {ticker}: {value!r} is not numeric')
+            log.debug(f'Skipping {spec.name} for {ticker}: {value!r} is not numeric')
             return None

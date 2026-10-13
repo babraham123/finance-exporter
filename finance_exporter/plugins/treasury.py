@@ -29,13 +29,16 @@ class TreasuryClient:
 
 
 class Treasury(Plugin):
+    SETTINGS = {
+        'properties': {'curve': {'enum': list(CURVES), 'default': 'nominal', 'description': 'Which daily Treasury par yield curve to read'}},
+    }
 
-    def __init__(self, source, client, **kwargs):
-        super().__init__(source, client, **kwargs)
-        self.curve = source.get('curve', 'nominal')
+    def __init__(self, settings, client, **kwargs):
+        super().__init__(settings, client, **kwargs)
+        self.curve = settings['curve']
 
     @classmethod
-    def live_client(cls, source):
+    def live_client(cls, settings):
         return TreasuryClient()
 
     def fetch_all(self, symbols):

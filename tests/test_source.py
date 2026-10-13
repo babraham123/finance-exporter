@@ -1,5 +1,6 @@
 from prometheus_client import CollectorRegistry
 from conftest import find, label_names, read_samples
+from finance_exporter.config import MetricSpec, SourceConfig
 from finance_exporter.source import Builtins, Source
 
 
@@ -18,11 +19,12 @@ class ScriptedPlugin:
 
 def scripted_source(plugin, tickers=('X',), metrics=None, labels=None):
     registry = CollectorRegistry()
-    config = {
-        'name': 'scripted', 'plugin': 'fake', 'interval': 60, 'tickers': list(tickers),
-        'metrics': metrics or {'price': {'item': 'price', 'type': 'Gauge', 'help': 'Price'}},
-        'labels': labels or dict(),
-    }
+    metrics = metrics or {'price': {'item': 'price', 'type': 'Gauge', 'help': 'Price'}}
+    config = SourceConfig(
+        name='scripted', plugin='fake', interval=60, tickers=tuple(tickers),
+        metrics=tuple(MetricSpec(name=name, **spec) for name, spec in metrics.items()),
+        labels=labels or dict(),
+    )
     return Source(config, plugin, registry, Builtins(registry, 'finance'), 'finance'), registry
 
 

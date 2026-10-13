@@ -50,7 +50,7 @@ class YahooClient:
 class Yahoo(Plugin):
 
     @classmethod
-    def live_client(cls, source):
+    def live_client(cls, settings):
         return YahooClient()
 
     def fetch(self, symbol):

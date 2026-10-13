@@ -32,24 +32,20 @@ class Plugin:
     All I/O goes through `client`, whose live implementation comes from live_client(); tests replay recorded
     responses through the same methods. `sleep` and `today` stand in for the clock.
     """
+    # JSON Schema for the plugin's own source settings: {'properties': {...}, 'required': [...]}.
+    # A property may set 'default', and 'secret': True to keep it out of logs.
+    SETTINGS = dict()
 
-    def __init__(self, source, client, sleep=time.sleep, today=utc_today):
-        self.source = source
+    def __init__(self, settings, client, sleep=time.sleep, today=utc_today):
+        self.settings = settings
         self.client = client
         self.sleep = sleep
         self.today = today
 
     @classmethod
-    def live_client(cls, source):
+    def live_client(cls, settings):
         """The client that talks to the real provider."""
         raise NotImplementedError
-
-    def require_api_key(self):
-        key = self.source.get('api_key')
-        # An unexpanded ${VAR} means the environment variable isn't set
-        if not key or key.startswith('$'):
-            raise Exception(f"Source {self.source['name']} requires api_key for the {self.source['plugin']} plugin")
-        return key
 
     def fetch_all(self, symbols):
         """Yield (symbol, result) once per symbol, as each is fetched.
