@@ -17,7 +17,7 @@ REAL_COLUMNS = {'10Y': '10 YR'}
 
 
 def config(*sources):
-    return {'port': 0, 'address': '127.0.0.1', 'metric_prefix': 'finance', 'min_interval': 1, 'sources': list(sources)}
+    return {'port': 0, 'address': '127.0.0.1', 'metric_prefix': 'finance', 'sources': list(sources)}
 
 
 def yahoo_source(tickers=tuple(YAHOO_ASSET_CLASSES)):
@@ -177,6 +177,8 @@ def test_source_wide_failure_counts_an_error_per_ticker(start_exporter):
 @pytest.mark.parametrize('bad_config, error', [
     (lambda: {**config(yahoo_source()), 'tickers': ['AAPL']}, 'tickers` is no longer supported'),
     (lambda: {**config(yahoo_source()), 'update_cache_on_startup': True}, 'update_cache_on_startup` is no longer supported'),
+    (lambda: {**config(yahoo_source()), 'min_interval': 15}, 'min_interval` is no longer supported'),
+    (lambda: config({**yahoo_source(), 'interval': 0}), 'Invalid config at sources/0/interval'),
     (lambda: config({**yahoo_source(), 'tickers': []}), 'Invalid config at sources/0/tickers'),
     (lambda: config({k: v for k, v in yahoo_source().items() if k != 'tickers'}), "'tickers' is a required property"),
     (lambda: config({k: v for k, v in fred_source().items() if k != 'api_key'}), "'api_key' is a required property"),

@@ -1,9 +1,8 @@
 port: 8000
 address: 0.0.0.0
 metric_prefix: finance
-min_interval: 15
 
-# Each source polls its own tickers and exports its own metrics and labels.
+# Each source polls its own tickers on its own schedule and exports its own metrics and labels.
 # Metric names must be unique across sources.
 sources:
   # Stocks, ETFs, mutual funds, indices, FX, crypto and futures

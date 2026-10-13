@@ -10,11 +10,6 @@ required:
   - sources
 
 properties:
-  min_interval:
-    title: Minimum Update Interval
-    description: Minimum time between updates (in seconds). Defaults to 15.
-    type: integer
-    minimum: 1
   port:
     title: Listen Port
     description: Default port to listen on
@@ -57,8 +52,9 @@ definitions:
         type: string
       interval:
         title: Collection interval
-        description: How long to wait between updates
+        description: Seconds between the starts of consecutive polls of this source
         type: integer
+        minimum: 1
       plugin:
         title: Data API Plugin
         description: Name of plugin to retrieve data. Allowed values, and each plugin's own settings, come from the plugin registry (finance_exporter/plugins).

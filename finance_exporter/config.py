@@ -15,6 +15,7 @@ from .source import BUILTIN_METRICS
 REMOVED_KEYS = {
     'tickers': "move the tickers each source should poll into that source's `tickers` list",
     'update_cache_on_startup': 'delete it; labels are no longer shared between sources',
+    'min_interval': "delete it; each source now polls on its own schedule, every `interval` seconds",
 }
 # Source keys every plugin shares; anything else is a plugin setting
 SOURCE_KEYS = ('name', 'plugin', 'interval', 'tickers', 'metrics', 'labels')
@@ -49,12 +50,11 @@ class Config:
     address: str
     sources: tuple
     metric_prefix: str = None
-    min_interval: int = 15
 
     def redacted(self):
         """The config as plain data, with secret settings hidden, for logging."""
         return {
-            'port': self.port, 'address': self.address, 'metric_prefix': self.metric_prefix, 'min_interval': self.min_interval,
+            'port': self.port, 'address': self.address, 'metric_prefix': self.metric_prefix,
             'sources': [
                 { 'name': s.name, 'plugin': s.plugin, 'interval': s.interval, 'tickers': list(s.tickers),
                   'metrics': { m.name: { 'item': m.item, 'type': m.type, 'help': m.help, 'scale': m.scale } for m in s.metrics },
@@ -112,7 +112,6 @@ def load_config(path, port=None, address=None):
         address=raw['address'] if address is None else address,
         sources=sources,
         metric_prefix=raw.get('metric_prefix'),
-        min_interval=raw.get('min_interval', 15),
     )
 
 
