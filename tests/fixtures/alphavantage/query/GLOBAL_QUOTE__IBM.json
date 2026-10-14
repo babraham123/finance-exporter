@@ -1,14 +1,14 @@
 {
  "Global Quote": {
   "01. symbol": "IBM",
-  "02. open": "228.3500",
+  "02. open": "228.2150",
   "03. high": "233.5000",
   "04. low": "227.2770",
-  "05. price": "230.8000",
-  "06. volume": "5119201",
+  "05. price": "230.7800",
+  "06. volume": "5083223",
   "07. latest trading day": "2026-10-13",
   "08. previous close": "227.0200",
-  "09. change": "3.7800",
-  "10. change percent": "1.6651%"
+  "09. change": "3.7600",
+  "10. change percent": "1.6562%"
  }
 }

@@ -1,5 +1,5 @@
 {
- "count": 10000,
+ "count": 13141,
  "file_type": "json",
  "limit": 10,
  "observation_end": "9999-12-31",
@@ -28,6 +28,42 @@
    "realtime_end": "2026-10-13",
    "realtime_start": "2026-10-13",
    "value": "0.47"
+  },
+  {
+   "date": "2026-10-07",
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "value": "0.51"
+  },
+  {
+   "date": "2026-10-06",
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "value": "0.48"
+  },
+  {
+   "date": "2026-10-05",
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "value": "0.47"
+  },
+  {
+   "date": "2026-10-02",
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "value": "0.45"
+  },
+  {
+   "date": "2026-10-01",
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "value": "0.46"
+  },
+  {
+   "date": "2026-09-30",
+   "realtime_end": "2026-10-13",
+   "realtime_start": "2026-10-13",
+   "value": "0.41"
   }
  ],
  "offset": 0,
