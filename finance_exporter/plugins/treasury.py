@@ -2,7 +2,7 @@ import csv
 import io
 import re
 from datetime import datetime
-from .base import Plugin, date_to_epoch, http_get
+from .base import Plugin, Settings, date_to_epoch, http_get
 
 URL = 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/{year}/all'
 CURVES = {
@@ -29,12 +29,10 @@ class TreasuryClient:
 
 
 class Treasury(Plugin):
-    SETTINGS = {
-        'properties': {'curve': {'enum': list(CURVES), 'default': 'nominal', 'description': 'Which daily Treasury par yield curve to read'}},
-    }
+    SETTINGS = Settings({'curve': {'enum': list(CURVES), 'default': 'nominal', 'description': 'Which daily Treasury par yield curve to read'}})
 
-    def __init__(self, settings, client, **kwargs):
-        super().__init__(settings, client, **kwargs)
+    def __init__(self, settings, client, clock=None):
+        super().__init__(settings, client, clock)
         self.curve = settings['curve']
 
     @classmethod
@@ -42,7 +40,7 @@ class Treasury(Plugin):
         return TreasuryClient()
 
     def fetch_all(self, symbols):
-        year = self.today().year
+        year = self.clock.today().year
         # The current year's file is empty until the first business day of January
         latest = self._latest_row(year) or self._latest_row(year - 1)
         if latest is None:

@@ -2,7 +2,7 @@
 from datetime import date
 
 from clients import Replay
-from conftest import RECORDED_ON, Sleeps, fixture
+from conftest import RECORDED_ON, FakeClock, fixture
 from finance_exporter.plugins.alphavantage import AlphaVantage
 from finance_exporter.plugins.base import RateLimited
 from finance_exporter.plugins.fred import Fred
@@ -32,19 +32,19 @@ class RateLimitedYahoo:
 
 
 def test_yahoo_retries_rate_limits_with_exponential_backoff():
-    sleeps = Sleeps()
-    yahoo = Yahoo(settings(), RateLimitedYahoo(refusals=2), sleep=sleeps)
+    clock = FakeClock()
+    yahoo = Yahoo(settings(), RateLimitedYahoo(refusals=2), clock)
 
     assert dict(yahoo.fetch_all(['AAPL']))['AAPL']['regularMarketPrice'] == fixture('yfinance', 'info', 'AAPL')['regularMarketPrice']
-    assert sleeps == [5, 10]
+    assert clock.sleeps == [5, 10]
 
 
 def test_yahoo_gives_up_after_three_retries():
-    sleeps = Sleeps()
-    yahoo = Yahoo(settings(), RateLimitedYahoo(refusals=4), sleep=sleeps)
+    clock = FakeClock()
+    yahoo = Yahoo(settings(), RateLimitedYahoo(refusals=4), clock)
 
     assert isinstance(dict(yahoo.fetch_all(['AAPL']))['AAPL'], RateLimited)
-    assert sleeps == [5, 10, 20]
+    assert clock.sleeps == [5, 10, 20]
 
 
 def test_yahoo_keeps_the_quote_when_fund_data_fails():
@@ -104,20 +104,20 @@ class TreasuryYears:
 
 def test_treasury_uses_previous_year_before_its_first_business_day():
     client = TreasuryYears(recorded_year=RECORDED_ON.year)
-    treasury = Treasury(settings(curve='nominal'), client, today=lambda: date(RECORDED_ON.year + 1, 1, 1))
+    treasury = Treasury(settings(curve='nominal'), client, FakeClock(today=date(RECORDED_ON.year + 1, 1, 1)))
 
     assert dict(treasury.fetch_all(['10Y']))['10Y']['value'] is not None
     assert client.years == [RECORDED_ON.year + 1, RECORDED_ON.year]
 
 
 def test_treasury_has_no_data_when_both_years_are_empty():
-    treasury = Treasury(settings(curve='nominal'), TreasuryYears(recorded_year=None), today=lambda: RECORDED_ON)
+    treasury = Treasury(settings(curve='nominal'), TreasuryYears(recorded_year=None), FakeClock())
 
     assert dict(treasury.fetch_all(['3M', '10Y'])) == {'3M': None, '10Y': None}
 
 
 def test_treasury_rejects_tenors_missing_from_the_curve():
-    treasury = Treasury(settings(curve='real'), Replay('treasury'), today=lambda: RECORDED_ON)
+    treasury = Treasury(settings(curve='real'), Replay('treasury'), FakeClock())
     results = dict(treasury.fetch_all(['3M', '10Y']))
 
     assert isinstance(results['3M'], LookupError)
@@ -129,10 +129,10 @@ def test_alphavantage_spaces_requests_and_reports_throttling():
         def query(self, function, symbol):
             return {'Note': 'Thank you for using Alpha Vantage! Our standard API rate limit is 25 requests per day.'}
 
-    sleeps = Sleeps()
-    ibm = dict(AlphaVantage(settings(api_key='demo'), Replay('alphavantage'), sleep=sleeps).fetch_all(['IBM']))['IBM']
-    throttled = dict(AlphaVantage(settings(api_key='demo'), Throttled()).fetch_all(['IBM']))['IBM']
+    clock = FakeClock()
+    ibm = dict(AlphaVantage(settings(api_key='demo'), Replay('alphavantage'), clock).fetch_all(['IBM']))['IBM']
+    throttled = dict(AlphaVantage(settings(api_key='demo'), Throttled(), FakeClock()).fetch_all(['IBM']))['IBM']
 
     assert ibm['asset_class'] == 'stock'
-    assert sleeps == [1, 1, 1]
+    assert clock.sleeps == [1, 1, 1]
     assert isinstance(throttled, RateLimited)

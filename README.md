@@ -140,8 +140,8 @@ Tests replay recorded API responses (`tests/fixtures`). To re-record, run `pytho
 ### Adding a plugin
 Subclass `Plugin` in `finance_exporter/plugins/`:
 - Put I/O in a client class and return it from `live_client(settings)`.
-- Implement `fetch(symbol)` or `fetch_all(symbols)`.
-- Declare source settings in `SETTINGS`.
+- Implement `fetch(symbol)` or `fetch_all(symbols)`; wait and read the date through `self.clock`.
+- Declare source settings as a `Settings` in `SETTINGS`.
 - Register the class in `PLUGINS`.
 
 See [CONTEXT.md](CONTEXT.md) for terminology.

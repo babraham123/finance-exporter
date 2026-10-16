@@ -1,4 +1,4 @@
-from .base import Plugin, date_to_epoch, http_get
+from .base import Plugin, Settings, date_to_epoch, http_get
 
 BASE_URL = 'https://api.stlouisfed.org/fred'
 # The newest observations of a daily series are "." on holidays, so look back far enough to find a value
@@ -21,10 +21,10 @@ class FredClient:
 
 
 class Fred(Plugin):
-    SETTINGS = {
-        'properties': {'api_key': {'type': 'string', 'minLength': 1, 'secret': True, 'description': 'May reference an environment variable, e.g. ${FRED_API_KEY}'}},
-        'required': ['api_key'],
-    }
+    SETTINGS = Settings(
+        {'api_key': {'type': 'string', 'minLength': 1, 'secret': True, 'description': 'May reference an environment variable, e.g. ${FRED_API_KEY}'}},
+        required=['api_key'],
+    )
 
     @classmethod
     def live_client(cls, settings):

@@ -1,22 +1,7 @@
 import threading
 
+from conftest import FakeClock
 from finance_exporter.runner import Runner
-
-
-class FakeClock:
-    """Virtual time: wait() advances it instantly."""
-
-    def __init__(self):
-        self.time = 0
-        self.waits = list()
-
-    def now(self):
-        return self.time
-
-    def wait(self, seconds, stop):
-        self.waits.append(seconds)
-        self.time += seconds
-        return stop.is_set()
 
 
 class TimedSource:

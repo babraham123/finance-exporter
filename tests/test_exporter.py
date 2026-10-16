@@ -1,5 +1,8 @@
+import threading
+
 import pytest
-from conftest import (fixture, find, label_names, latest_fred_observation, latest_treasury_row, midnight_utc)
+from conftest import (FakeClock, fixture, find, label_names, latest_fred_observation, latest_treasury_row, midnight_utc,
+                      scrape)
 
 YAHOO_ASSET_CLASSES = {
     'AAPL': 'stock',
@@ -79,7 +82,7 @@ def fred_key(monkeypatch):
 def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     exporter = start_exporter(all_sources())
     exporter.poll()
-    samples = exporter.scrape()
+    samples = exporter.samples()
 
     # Yahoo: price for every asset class, classified from quoteType
     for symbol, asset_class in YAHOO_ASSET_CLASSES.items():
@@ -127,6 +130,42 @@ def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     assert find(samples, 'finance_updates_total', source='treasury_real', ticker='10Y') == 1
     assert find(samples, 'finance_poll_seconds_count', source='treasury', plugin='treasury') == 1
     assert label_names(samples, 'finance_fetch_errors_total') == set()
+
+
+class PollsOnceClock(FakeClock):
+    """Each Runner polls once, then waits until stopped. `polled` lets the test wait for every Runner's first poll."""
+
+    def __init__(self, runners):
+        super().__init__()
+        self.polled = threading.Barrier(runners + 1)
+
+    def wait(self, seconds, stop):
+        self.polled.wait(timeout=10)
+        return stop.wait()
+
+
+def source_threads():
+    return [ thread for thread in threading.enumerate() if thread.name.startswith('source-') ]
+
+
+def test_started_exporter_serves_what_each_source_polls_until_stopped(start_exporter):
+    clock = PollsOnceClock(runners=2)
+    exporter = start_exporter(config(yahoo_source(['SPY']), treasury_source(tickers=['10Y'])), clock=clock)
+    port = exporter.start()
+    try:
+        clock.polled.wait(timeout=10)
+        samples = scrape(port)
+    finally:
+        exporter.stop()
+
+    assert find(samples, 'finance_current_price', ticker='SPY', source='yahoo') == fixture('yfinance', 'info', 'SPY')['regularMarketPrice']
+    assert find(samples, 'finance_treasury_yield', ticker='10Y') == pytest.approx(float(latest_treasury_row('nominal')['10 Yr']) * 0.01)
+    assert find(samples, 'finance_poll_seconds_count', source='yahoo') == 1
+    assert find(samples, 'finance_poll_seconds_count', source='treasury') == 1
+    # Stopping ends every source's polling and the HTTP server
+    assert source_threads() == []
+    with pytest.raises(OSError):
+        scrape(port)
 
 
 class ThrottledAlphaVantage:

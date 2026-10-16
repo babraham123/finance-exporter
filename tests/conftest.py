@@ -1,16 +1,15 @@
 import csv
 import io
-import json
 import os
 import urllib.request
 from datetime import date, datetime, timezone
 
 import pytest
 import yaml
-from prometheus_client import CollectorRegistry
+from prometheus_client import CollectorRegistry, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
-from clients import FIXTURES, Replay, fixture_path
+from clients import FIXTURES, Replay
 from finance_exporter.config import load_config
 from finance_exporter.exporter import Exporter
 
@@ -20,12 +19,7 @@ with open(os.path.join(FIXTURES, 'recorded_on.txt')) as _fd:
 
 def fixture(plugin, method, *args):
     """A recorded response, exactly as the live client returned it."""
-    path = fixture_path(plugin, method, args, '.json')
-    if os.path.exists(path):
-        with open(path) as fd:
-            return json.load(fd)
-    with open(fixture_path(plugin, method, args, '.csv')) as fd:
-        return fd.read()
+    return getattr(Replay(plugin), method)(*args)
 
 
 def midnight_utc(date_string, fmt='%Y-%m-%d'):
@@ -42,61 +36,76 @@ def latest_treasury_row(curve):
     return max(rows, key=lambda row: datetime.strptime(row['Date'], '%m/%d/%Y'))
 
 
-class Sleeps(list):
-    """A sleep() that records requested delays instead of waiting."""
+class FakeClock:
+    """Virtual time: sleep() and wait() advance it instantly. today() is the day the fixtures were recorded."""
 
-    def __call__(self, seconds):
-        self.append(seconds)
+    def __init__(self, today=RECORDED_ON):
+        self.time = 0
+        self.sleeps = list()
+        self.waits = list()
+        self.date = today
+
+    def now(self):
+        return self.time
+
+    def wait(self, seconds, stop):
+        self.waits.append(seconds)
+        self.time += seconds
+        return stop.is_set()
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.time += seconds
+
+    def today(self):
+        return self.date
 
 
-def read_samples(registry):
-    """Samples in a registry as {(name, frozenset(labels)): value}."""
+def parse_samples(text):
+    """Samples in Prometheus text exposition as {(name, frozenset(labels)): value}."""
     return {
         (sample.name, frozenset(sample.labels.items())): sample.value
-        for family in registry.collect()
+        for family in text_string_to_metric_families(text)
         for sample in family.samples
     }
 
 
-class ExporterUnderTest:
-    """An exporter whose plugins replay recorded responses, with its own metric registry.
+def read_samples(registry):
+    """Samples in a registry, as it would serve them."""
+    return parse_samples(generate_latest(registry).decode())
 
-    `clients` replaces the replayed client for the named plugins. The HTTP server starts only when scraped.
+
+def scrape(port):
+    """Samples served over HTTP on /metrics."""
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/metrics') as response:
+        return parse_samples(response.read().decode())
+
+
+class ExporterUnderTest:
+    """An exporter whose plugins replay recorded responses, on `clock`, with its own metric registry and a free port.
+
+    `clients` replaces the replayed client for the named plugins.
     """
 
-    def __init__(self, config_path, clients=None):
-        clients = clients or dict()
-        self.sleeps = Sleeps()
+    def __init__(self, config_path, clients=None, clock=None):
+        overrides = clients or dict()
+        self.clock = clock or FakeClock()
         self.registry = CollectorRegistry()
-
-        def make_plugin(plugin_class, source):
-            client = clients.get(source.plugin) or Replay(source.plugin)
-            return plugin_class(source.settings, client, sleep=self.sleeps, today=lambda: RECORDED_ON)
-
         self.config = load_config(config_path, port=0, address='127.0.0.1')
-        self.exporter = Exporter(self.config, registry=self.registry, make_plugin=make_plugin)
+        self.exporter = Exporter(self.config, clients=lambda source: overrides.get(source.plugin) or Replay(source.plugin),
+                                 clock=self.clock, registry=self.registry)
 
     def poll(self):
-        for source in self.exporter.sources.values():
-            source.poll()
+        self.exporter.poll()
 
     def samples(self):
         return read_samples(self.registry)
 
-    def scrape(self):
-        """Samples as served over HTTP on /metrics."""
-        server = self.exporter.start_server()
-        try:
-            with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}/metrics') as response:
-                text = response.read().decode()
-        finally:
-            server.shutdown()
-            server.server_close()
-        return {
-            (sample.name, frozenset(sample.labels.items())): sample.value
-            for family in text_string_to_metric_families(text)
-            for sample in family.samples
-        }
+    def start(self):
+        return self.exporter.start()
+
+    def stop(self):
+        self.exporter.stop()
 
 
 def find(samples, name, **labels):
@@ -113,9 +122,9 @@ def label_names(samples, name):
 
 @pytest.fixture
 def start_exporter(tmp_path):
-    def start(config, clients=None):
+    def start(config, clients=None, clock=None):
         path = tmp_path / 'config.yaml'
         path.write_text(config if isinstance(config, str) else yaml.safe_dump(config))
-        return ExporterUnderTest(str(path), clients)
+        return ExporterUnderTest(str(path), clients, clock)
 
     return start

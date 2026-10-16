@@ -62,7 +62,7 @@ class Yahoo(Plugin):
                     raise
                 delay = BACKOFF_SECONDS * 2 ** attempt
                 log.warning(f"Yahoo rate limited fetching {symbol}; retrying in {delay}s")
-                self.sleep(delay)
+                self.clock.sleep(delay)
 
     def _fetch(self, symbol):
         quote = self.client.info(symbol)

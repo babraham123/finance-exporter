@@ -2,14 +2,13 @@
 import copy
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from importlib import resources
 
 import jsonschema
 import yaml
 
 from .plugins import PLUGINS
-from .source import BUILTIN_METRICS
 
 # Top-level keys that are no longer supported, with how to migrate
 REMOVED_KEYS = {
@@ -17,8 +16,9 @@ REMOVED_KEYS = {
     'update_cache_on_startup': 'delete it; labels are no longer shared between sources',
     'min_interval': "delete it; each source now polls on its own schedule, every `interval` seconds",
 }
+SCHEMA = yaml.safe_load(resources.files(__package__).joinpath('schema.yaml').read_text())
 # Source keys every plugin shares; anything else is a plugin setting
-SOURCE_KEYS = ('name', 'plugin', 'interval', 'tickers', 'metrics', 'labels')
+SOURCE_KEYS = tuple(SCHEMA['definitions']['source']['properties'])
 UNEXPANDED_VARIABLE = re.compile(r'\$(\w+|\{[^}]*\})')
 
 
@@ -43,6 +43,11 @@ class SourceConfig:
     settings: dict = field(default_factory=dict)
     secrets: frozenset = frozenset()
 
+    def redacted(self):
+        """Shaped like the source's entry in the config file, with secret settings hidden."""
+        shared = { key: value for key, value in asdict(self).items() if key in SOURCE_KEYS }
+        return { **shared, **{ key: ('<redacted>' if key in self.secrets else value) for key, value in self.settings.items() } }
+
 
 @dataclass(frozen=True)
 class Config:
@@ -53,21 +58,12 @@ class Config:
 
     def redacted(self):
         """The config as plain data, with secret settings hidden, for logging."""
-        return {
-            'port': self.port, 'address': self.address, 'metric_prefix': self.metric_prefix,
-            'sources': [
-                { 'name': s.name, 'plugin': s.plugin, 'interval': s.interval, 'tickers': list(s.tickers),
-                  'metrics': { m.name: { 'item': m.item, 'type': m.type, 'help': m.help, 'scale': m.scale } for m in s.metrics },
-                  'labels': s.labels,
-                  **{ k: ('<redacted>' if k in s.secrets else v) for k, v in s.settings.items() } }
-                for s in self.sources
-            ],
-        }
+        return { **asdict(self), 'sources': [ source.redacted() for source in self.sources ] }
 
 
 def schema():
     """schema.yaml, with one source schema per plugin built from the generic source fields plus the plugin's SETTINGS."""
-    full = yaml.safe_load(resources.files(__package__).joinpath('schema.yaml').read_text())
+    full = copy.deepcopy(SCHEMA)
     generic = full['definitions']['source']
     full['definitions']['source'] = {
         'type': 'object',
@@ -79,16 +75,12 @@ def schema():
         ],
     }
     for name, plugin_class in PLUGINS.items():
-        settings = plugin_class.SETTINGS
+        settings = plugin_class.SETTINGS.schema()
         source = copy.deepcopy(generic)
-        source['properties'].update({ key: _schema_only(spec) for key, spec in settings.get('properties', dict()).items() })
-        source['required'] = generic['required'] + settings.get('required', list())
+        source['properties'].update(settings['properties'])
+        source['required'] = generic['required'] + settings['required']
         full['definitions'][f'source_{name}'] = source
     return full
-
-
-def _schema_only(spec):
-    return { k: v for k, v in spec.items() if k != 'secret' }
 
 
 def load_config(path, port=None, address=None):
@@ -105,8 +97,8 @@ def load_config(path, port=None, address=None):
     except jsonschema.ValidationError as e:
         location = '/'.join(str(item) for item in e.absolute_path)
         raise Exception(f'Invalid config at {location}: {e.message}')
-    sources = tuple(_source(source) for source in raw['sources'])
-    _check_names(sources)
+    sources = tuple(source_config(source) for source in raw['sources'])
+    _check_names_unique(sources)
     return Config(
         port=raw['port'] if port is None else port,
         address=raw['address'] if address is None else address,
@@ -129,10 +121,9 @@ def _check_variables_expanded(value, path=()):
             raise Exception(f"Environment variable {match.group(1).strip('{}')} is not set (used at {location})")
 
 
-def _source(raw):
-    plugin_settings = PLUGINS[raw['plugin']].SETTINGS.get('properties', dict())
-    settings = { key: spec['default'] for key, spec in plugin_settings.items() if 'default' in spec }
-    settings.update({ key: value for key, value in raw.items() if key not in SOURCE_KEYS })
+def source_config(raw):
+    """One validated source entry from the config file, typed, with its plugin's setting defaults filled in."""
+    plugin_settings = PLUGINS[raw['plugin']].SETTINGS
     return SourceConfig(
         name=raw['name'],
         plugin=raw['plugin'],
@@ -140,21 +131,14 @@ def _source(raw):
         tickers=tuple(raw['tickers']),
         metrics=tuple(MetricSpec(name=name, **metric) for name, metric in raw['metrics'].items()),
         labels=dict(raw.get('labels') or dict()),
-        settings=settings,
-        secrets=frozenset(key for key, spec in plugin_settings.items() if spec.get('secret')),
+        settings=plugin_settings.resolve({ key: value for key, value in raw.items() if key not in SOURCE_KEYS }),
+        secrets=plugin_settings.secrets,
     )
 
 
-def _check_names(sources):
+def _check_names_unique(sources):
     names = set()
-    metrics = dict()
     for source in sources:
         if source.name in names:
             raise Exception(f'Source name {source.name} is used more than once')
         names.add(source.name)
-        for metric in source.metrics:
-            if metric.name in BUILTIN_METRICS:
-                raise Exception(f'Metric {metric.name} in source {source.name} clashes with a built-in metric')
-            if metric.name in metrics:
-                raise Exception(f'Metric {metric.name} is defined by sources {metrics[metric.name]} and {source.name}; metric names must be unique across sources')
-            metrics[metric.name] = source.name

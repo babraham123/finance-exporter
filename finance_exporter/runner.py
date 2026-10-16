@@ -1,18 +1,7 @@
 import logging
 import threading
-import time
 
 log = logging.getLogger(__name__)
-
-
-class Clock:
-    """Real time. wait() returns True as soon as `stop` is set."""
-
-    def now(self):
-        return time.monotonic()
-
-    def wait(self, seconds, stop):
-        return stop.wait(seconds)
 
 
 class Runner:
@@ -21,9 +10,9 @@ class Runner:
     A poll that overruns its interval is followed immediately by the next; missed polls are not made up.
     """
 
-    def __init__(self, source, clock=None):
+    def __init__(self, source, clock):
         self.source = source
-        self.clock = clock or Clock()
+        self.clock = clock
 
     def run(self, stop):
         next_poll = self.clock.now()

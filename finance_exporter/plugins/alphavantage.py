@@ -1,5 +1,5 @@
 import re
-from .base import Plugin, RateLimited, http_get
+from .base import Plugin, RateLimited, Settings, http_get
 
 BASE_URL = 'https://www.alphavantage.co/query'
 ASSET_TYPES = {'Common Stock': 'stock', 'ETF': 'etf', 'Mutual Fund': 'mutual_fund'}
@@ -18,10 +18,10 @@ class AlphaVantageClient:
 
 class AlphaVantage(Plugin):
     """Free tier allows 25 requests/day, and each fetch makes 3."""
-    SETTINGS = {
-        'properties': {'api_key': {'type': 'string', 'minLength': 1, 'secret': True, 'description': 'May reference an environment variable, e.g. ${ALPHAVANTAGE_API_KEY}'}},
-        'required': ['api_key'],
-    }
+    SETTINGS = Settings(
+        {'api_key': {'type': 'string', 'minLength': 1, 'secret': True, 'description': 'May reference an environment variable, e.g. ${ALPHAVANTAGE_API_KEY}'}},
+        required=['api_key'],
+    )
 
     @classmethod
     def live_client(cls, settings):
@@ -40,7 +40,7 @@ class AlphaVantage(Plugin):
         return info
 
     def _query(self, function, symbol):
-        self.sleep(REQUEST_SPACING_SECONDS)
+        self.clock.sleep(REQUEST_SPACING_SECONDS)
         response = self.client.query(function, symbol)
         # Throttling and bad requests come back as HTTP 200 with a message instead of data
         if 'Note' in response or 'Information' in response:

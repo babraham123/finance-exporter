@@ -1,7 +1,8 @@
 from prometheus_client import CollectorRegistry
 from conftest import find, label_names, read_samples
 from finance_exporter.config import MetricSpec, SourceConfig
-from finance_exporter.source import Builtins, Source
+from finance_exporter.metrics import Metrics
+from finance_exporter.source import Source
 
 
 class ScriptedPlugin:
@@ -25,7 +26,7 @@ def scripted_source(plugin, tickers=('X',), metrics=None, labels=None):
         metrics=tuple(MetricSpec(name=name, **spec) for name, spec in metrics.items()),
         labels=labels or dict(),
     )
-    return Source(config, plugin, registry, Builtins(registry, 'finance'), 'finance'), registry
+    return Source(config, plugin, Metrics(registry, 'finance')), registry
 
 
 def test_source_records_each_metric_type_and_keeps_last_known_labels():

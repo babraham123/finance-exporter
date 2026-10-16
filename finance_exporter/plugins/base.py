@@ -1,7 +1,8 @@
-import time
 from datetime import datetime, timezone
 
 import requests
+
+from ..clock import Clock
 
 HTTP_TIMEOUT = 30
 
@@ -15,10 +16,6 @@ def date_to_epoch(date_string, fmt='%Y-%m-%d'):
     return datetime.strptime(date_string, fmt).replace(tzinfo=timezone.utc).timestamp()
 
 
-def utc_today():
-    return datetime.now(timezone.utc).date()
-
-
 def http_get(url, **params):
     response = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
     if not response.ok:
@@ -26,21 +23,42 @@ def http_get(url, **params):
     return response
 
 
+class Settings:
+    """A plugin's own source settings, declared as JSON Schema properties.
+
+    Beyond JSON Schema, a property may set 'secret': True to keep its value out of logs.
+    A 'default' is filled in when the config leaves the setting out.
+    """
+
+    def __init__(self, properties=None, required=()):
+        self.properties = properties or dict()
+        self.required = list(required)
+        self.secrets = frozenset(key for key, spec in self.properties.items() if spec.get('secret'))
+
+    def schema(self):
+        """The properties and required keys this plugin adds to the source schema."""
+        return {
+            'properties': { key: { k: v for k, v in spec.items() if k != 'secret' } for key, spec in self.properties.items() },
+            'required': self.required,
+        }
+
+    def resolve(self, values):
+        """values, with the defaults of settings left out filled in."""
+        return { **{ key: spec['default'] for key, spec in self.properties.items() if 'default' in spec }, **values }
+
+
 class Plugin:
     """A data source for one configured source's tickers.
 
     All I/O goes through `client`, whose live implementation comes from live_client(); tests replay recorded
-    responses through the same methods. `sleep` and `today` stand in for the clock.
+    responses through the same methods. Waiting and reading the date go through `clock`.
     """
-    # JSON Schema for the plugin's own source settings: {'properties': {...}, 'required': [...]}.
-    # A property may set 'default', and 'secret': True to keep it out of logs.
-    SETTINGS = dict()
+    SETTINGS = Settings()
 
-    def __init__(self, settings, client, sleep=time.sleep, today=utc_today):
+    def __init__(self, settings, client, clock=None):
         self.settings = settings
         self.client = client
-        self.sleep = sleep
-        self.today = today
+        self.clock = clock or Clock()
 
     @classmethod
     def live_client(cls, settings):

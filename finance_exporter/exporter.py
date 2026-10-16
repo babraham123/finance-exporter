@@ -1,33 +1,55 @@
 import logging
+import threading
 
 from prometheus_client import start_http_server, REGISTRY
 
-from .plugins import PLUGINS
-from .source import Builtins, Source
+from .clock import Clock
+from .metrics import Metrics
+from .plugins import build_plugin, live_client
+from .runner import Runner
+from .source import Source
 
 log = logging.getLogger(__name__)
-
-
-def live_plugin(plugin_class, source):
-    return plugin_class(source.settings, plugin_class.live_client(source.settings))
+# How long stop() waits for a poll in progress before returning anyway
+SHUTDOWN_GRACE_SECONDS = 10
 
 
 class Exporter:
-    """Builds every configured source against one registry and serves it.
+    """Every configured source, polling on its own schedule into one registry, served over HTTP.
 
-    make_plugin(plugin_class, source_config) builds each source's plugin; tests pass one that replays recorded responses.
+    clients(source_config) gives each source's plugin its client; tests pass one that replays recorded responses.
     """
 
-    def __init__(self, config, registry=REGISTRY, make_plugin=live_plugin):
+    def __init__(self, config, clients=live_client, clock=None, registry=REGISTRY):
         self.config = config
+        self.clock = clock or Clock()
         self.registry = registry
-        builtins = Builtins(registry, config.metric_prefix)
-        self.sources = {
-            source.name: Source(source, make_plugin(PLUGINS[source.plugin], source), registry, builtins, config.metric_prefix)
+        metrics = Metrics(registry, config.metric_prefix)
+        self.sources = [
+            Source(source, build_plugin(source, clients(source), self.clock), metrics)
             for source in config.sources
-        }
+        ]
+        self.stopping = threading.Event()
+        self.server = None
+        self.threads = list()
 
-    def start_server(self):
+    def poll(self):
+        """Poll every source once, in turn, on the calling thread."""
+        for source in self.sources:
+            source.poll()
+
+    def start(self):
+        """Serve metrics and start polling every source. Returns the port served on."""
         log.info(f"Starting HTTP Server on {self.config.address}:{self.config.port}")
-        server, _ = start_http_server(int(self.config.port), addr=self.config.address, registry=self.registry)
-        return server
+        self.server, _ = start_http_server(self.config.port, addr=self.config.address, registry=self.registry)
+        # Each source polls on its own thread, so one source's slow or throttled provider never delays another
+        self.threads = [ Runner(source, self.clock).start(self.stopping) for source in self.sources ]
+        return self.server.server_port
+
+    def stop(self):
+        """Stop polling and serving, waiting up to SHUTDOWN_GRACE_SECONDS per source for a poll in progress."""
+        self.stopping.set()
+        self.server.shutdown()
+        self.server.server_close()
+        for thread in self.threads:
+            thread.join(SHUTDOWN_GRACE_SECONDS)
