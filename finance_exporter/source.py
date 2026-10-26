@@ -23,16 +23,16 @@ class Source:
             for ticker, result in self.plugin.fetch_all(self.tickers):
                 pending.discard(ticker)
                 if isinstance(result, Exception):
-                    log.warning(f'Unable to fetch {ticker} from {self.name}: {result}')
+                    log.warning(f"Unable to fetch {ticker} from {self.name}: {result}")
                     self.metrics.fetch_failed(ticker)
                 elif result is None:
-                    log.info(f'No data for {ticker} from {self.name}')
+                    log.info(f"No data for {ticker} from {self.name}")
                 else:
                     log.debug(pformat(result))
                     self.metrics.record(ticker, result)
-                    log.info(f'Updated {ticker} from {self.name}')
+                    log.info(f"Updated {ticker} from {self.name}")
         except Exception as e:
-            log.warning(f'Unable to poll {self.name}: {e}')
+            log.warning(f"Unable to poll {self.name}: {e}")
             for ticker in pending:
                 self.metrics.fetch_failed(ticker)
         finally:

@@ -7,20 +7,20 @@ from .base import Plugin, RateLimited
 log = logging.getLogger(__name__)
 
 ASSET_CLASSES = {
-    'EQUITY': 'stock',
-    'ETF': 'etf',
-    'MUTUALFUND': 'mutual_fund',
-    'INDEX': 'index',
-    'CURRENCY': 'fx',
-    'CRYPTOCURRENCY': 'crypto',
-    'FUTURE': 'future',
+    "EQUITY": "stock",
+    "ETF": "etf",
+    "MUTUALFUND": "mutual_fund",
+    "INDEX": "index",
+    "CURRENCY": "fx",
+    "CRYPTOCURRENCY": "crypto",
+    "FUTURE": "future",
 }
-FUND_TYPES = ('ETF', 'MUTUALFUND')
+FUND_TYPES = ("ETF", "MUTUALFUND")
 # funds_data field -> quote field; fills gaps where .info lacks fund details (common for mutual funds)
-FUND_OVERVIEW = {'categoryName': 'category', 'family': 'fundFamily', 'legalType': 'legalType'}
+FUND_OVERVIEW = {"categoryName": "category", "family": "fundFamily", "legalType": "legalType"}
 FUND_OPERATIONS = {
-    'Annual Report Expense Ratio': 'annualReportExpenseRatio',
-    'Annual Holdings Turnover': 'annualHoldingsTurnover',
+    "Annual Report Expense Ratio": "annualReportExpenseRatio",
+    "Annual Holdings Turnover": "annualHoldingsTurnover",
 }
 RETRIES = 3
 BACKOFF_SECONDS = 5
@@ -41,14 +41,13 @@ class YahooClient:
         operations = funds.fund_operations
         column = operations[symbol] if symbol in operations else dict()
         return {
-            'fund_overview': funds.fund_overview or dict(),
-            'asset_classes': funds.asset_classes or dict(),
-            'fund_operations': { row: value for row, value in column.items() if pd.notna(value) },
+            "fund_overview": funds.fund_overview or dict(),
+            "asset_classes": funds.asset_classes or dict(),
+            "fund_operations": {row: value for row, value in column.items() if pd.notna(value)},
         }
 
 
 class Yahoo(Plugin):
-
     @classmethod
     def live_client(cls, settings):
         return YahooClient()
@@ -60,14 +59,14 @@ class Yahoo(Plugin):
             except RateLimited:
                 if attempt == RETRIES:
                     raise
-                delay = BACKOFF_SECONDS * 2 ** attempt
+                delay = BACKOFF_SECONDS * 2**attempt
                 log.warning(f"Yahoo rate limited fetching {symbol}; retrying in {delay}s")
                 self.clock.sleep(delay)
 
     def _fetch(self, symbol):
         quote = self.client.info(symbol)
-        quote_type = quote.get('quoteType')
-        quote['asset_class'] = ASSET_CLASSES.get(quote_type, str(quote_type).lower())
+        quote_type = quote.get("quoteType")
+        quote["asset_class"] = ASSET_CLASSES.get(quote_type, str(quote_type).lower())
         if quote_type in FUND_TYPES:
             for field, value in self._fund_fields(symbol).items():
                 if quote.get(field) is None:
@@ -82,9 +81,21 @@ class Yahoo(Plugin):
             # Fund details are supplementary; keep the quote
             log.warning(f"Unable to fetch fund data for {symbol}: {e}")
             return fields
-        overview = funds['fund_overview']
-        fields.update({ name: overview[key] for key, name in FUND_OVERVIEW.items() if overview.get(key) is not None })
-        fields.update(funds['asset_classes'])
-        operations = funds['fund_operations']
-        fields.update({ name: operations[row] for row, name in FUND_OPERATIONS.items() if operations.get(row) is not None })
+        overview = funds["fund_overview"]
+        fields.update(
+            {
+                name: overview[key]
+                for key, name in FUND_OVERVIEW.items()
+                if overview.get(key) is not None
+            }
+        )
+        fields.update(funds["asset_classes"])
+        operations = funds["fund_operations"]
+        fields.update(
+            {
+                name: operations[row]
+                for row, name in FUND_OPERATIONS.items()
+                if operations.get(row) is not None
+            }
+        )
         return fields

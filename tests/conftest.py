@@ -13,7 +13,7 @@ from clients import FIXTURES, Replay
 from finance_exporter.config import load_config
 from finance_exporter.exporter import Exporter
 
-with open(os.path.join(FIXTURES, 'recorded_on.txt')) as _fd:
+with open(os.path.join(FIXTURES, "recorded_on.txt")) as _fd:
     RECORDED_ON = date.fromisoformat(_fd.read().strip())
 
 
@@ -22,18 +22,20 @@ def fixture(plugin, method, *args):
     return getattr(Replay(plugin), method)(*args)
 
 
-def midnight_utc(date_string, fmt='%Y-%m-%d'):
+def midnight_utc(date_string, fmt="%Y-%m-%d"):
     return datetime.strptime(date_string, fmt).replace(tzinfo=timezone.utc).timestamp()
 
 
 def latest_fred_observation(series_id):
     """Newest observation with a value; FRED lists newest first and marks holidays '.'."""
-    return next(o for o in fixture('fred', 'observations', series_id)['observations'] if o['value'] != '.')
+    return next(
+        o for o in fixture("fred", "observations", series_id)["observations"] if o["value"] != "."
+    )
 
 
 def latest_treasury_row(curve):
-    rows = csv.DictReader(io.StringIO(fixture('treasury', 'year_csv', curve, RECORDED_ON.year)))
-    return max(rows, key=lambda row: datetime.strptime(row['Date'], '%m/%d/%Y'))
+    rows = csv.DictReader(io.StringIO(fixture("treasury", "year_csv", curve, RECORDED_ON.year)))
+    return max(rows, key=lambda row: datetime.strptime(row["Date"], "%m/%d/%Y"))
 
 
 class FakeClock:
@@ -77,7 +79,7 @@ def read_samples(registry):
 
 def scrape(port):
     """Samples served over HTTP on /metrics."""
-    with urllib.request.urlopen(f'http://127.0.0.1:{port}/metrics') as response:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics") as response:
         return parse_samples(response.read().decode())
 
 
@@ -91,9 +93,13 @@ class ExporterUnderTest:
         overrides = clients or dict()
         self.clock = clock or FakeClock()
         self.registry = CollectorRegistry()
-        self.config = load_config(config_path, port=0, address='127.0.0.1')
-        self.exporter = Exporter(self.config, clients=lambda source: overrides.get(source.plugin) or Replay(source.plugin),
-                                 clock=self.clock, registry=self.registry)
+        self.config = load_config(config_path, port=0, address="127.0.0.1")
+        self.exporter = Exporter(
+            self.config,
+            clients=lambda source: overrides.get(source.plugin) or Replay(source.plugin),
+            clock=self.clock,
+            registry=self.registry,
+        )
 
     def poll(self):
         self.exporter.poll()
@@ -110,20 +116,25 @@ class ExporterUnderTest:
 
 def find(samples, name, **labels):
     """Value of the one sample named `name` whose labels include `labels`, or None if absent."""
-    matches = [ value for (sample_name, sample_labels), value in samples.items()
-                if sample_name == name and set(labels.items()) <= sample_labels ]
-    assert len(matches) <= 1, f'{name} {labels} matched {len(matches)} samples'
+    matches = [
+        value
+        for (sample_name, sample_labels), value in samples.items()
+        if sample_name == name and set(labels.items()) <= sample_labels
+    ]
+    assert len(matches) <= 1, f"{name} {labels} matched {len(matches)} samples"
     return matches[0] if matches else None
 
 
 def label_names(samples, name):
-    return { frozenset(k for k, _ in labels) for (sample_name, labels) in samples if sample_name == name }
+    return {
+        frozenset(k for k, _ in labels) for (sample_name, labels) in samples if sample_name == name
+    }
 
 
 @pytest.fixture
 def start_exporter(tmp_path):
     def start(config, clients=None, clock=None):
-        path = tmp_path / 'config.yaml'
+        path = tmp_path / "config.yaml"
         path.write_text(config if isinstance(config, str) else yaml.safe_dump(config))
         return ExporterUnderTest(str(path), clients, clock)
 

@@ -41,9 +41,11 @@ class Exporter:
     def start(self):
         """Serve metrics and start polling every source. Returns the port served on."""
         log.info(f"Starting HTTP Server on {self.config.address}:{self.config.port}")
-        self.server, _ = start_http_server(self.config.port, addr=self.config.address, registry=self.registry)
+        self.server, _ = start_http_server(
+            self.config.port, addr=self.config.address, registry=self.registry
+        )
         # Each source polls on its own thread, so one source's slow or throttled provider never delays another
-        self.threads = [ Runner(source, self.clock).start(self.stopping) for source in self.sources ]
+        self.threads = [Runner(source, self.clock).start(self.stopping) for source in self.sources]
         return self.server.server_port
 
     def stop(self):

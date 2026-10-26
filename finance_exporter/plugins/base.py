@@ -11,7 +11,7 @@ class RateLimited(Exception):
     """The provider asked us to slow down."""
 
 
-def date_to_epoch(date_string, fmt='%Y-%m-%d'):
+def date_to_epoch(date_string, fmt="%Y-%m-%d"):
     """Midnight UTC of a date, as a Unix timestamp."""
     return datetime.strptime(date_string, fmt).replace(tzinfo=timezone.utc).timestamp()
 
@@ -19,7 +19,7 @@ def date_to_epoch(date_string, fmt='%Y-%m-%d'):
 def http_get(url, **params):
     response = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
     if not response.ok:
-        raise Exception(f'HTTP {response.status_code} from {url}: {response.text[:200]}')
+        raise Exception(f"HTTP {response.status_code} from {url}: {response.text[:200]}")
     return response
 
 
@@ -33,18 +33,24 @@ class Settings:
     def __init__(self, properties=None, required=()):
         self.properties = properties or dict()
         self.required = list(required)
-        self.secrets = frozenset(key for key, spec in self.properties.items() if spec.get('secret'))
+        self.secrets = frozenset(key for key, spec in self.properties.items() if spec.get("secret"))
 
     def schema(self):
         """The properties and required keys this plugin adds to the source schema."""
         return {
-            'properties': { key: { k: v for k, v in spec.items() if k != 'secret' } for key, spec in self.properties.items() },
-            'required': self.required,
+            "properties": {
+                key: {k: v for k, v in spec.items() if k != "secret"}
+                for key, spec in self.properties.items()
+            },
+            "required": self.required,
         }
 
     def resolve(self, values):
         """values, with the defaults of settings left out filled in."""
-        return { **{ key: spec['default'] for key, spec in self.properties.items() if 'default' in spec }, **values }
+        return {
+            **{key: spec["default"] for key, spec in self.properties.items() if "default" in spec},
+            **values,
+        }
 
 
 class Plugin:
@@ -53,6 +59,7 @@ class Plugin:
     All I/O goes through `client`, whose live implementation comes from live_client(); tests replay recorded
     responses through the same methods. Waiting and reading the date go through `clock`.
     """
+
     SETTINGS = Settings()
 
     def __init__(self, settings, client, clock=None):

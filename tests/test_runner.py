@@ -8,7 +8,7 @@ class TimedSource:
     """Each poll takes the next of `durations` seconds of virtual time; the last poll stops the runner."""
 
     def __init__(self, clock, stop, interval, durations, fail_on=()):
-        self.name = 'timed'
+        self.name = "timed"
         self.clock = clock
         self.stop = stop
         self.interval = interval
@@ -22,7 +22,7 @@ class TimedSource:
         if not self.durations:
             self.stop.set()
         if len(self.started) in self.fail_on:
-            raise RuntimeError('unexpected bug')
+            raise RuntimeError("unexpected bug")
 
 
 def run(interval, durations, fail_on=()):

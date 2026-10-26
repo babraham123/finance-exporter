@@ -21,7 +21,7 @@ class Runner:
                 self.source.poll()
             except Exception:
                 # A bug in one poll shouldn't end this source's polling for good
-                log.exception(f'Poll of {self.source.name} failed')
+                log.exception(f"Poll of {self.source.name} failed")
             next_poll += self.source.interval
             now = self.clock.now()
             next_poll = max(next_poll, now)
@@ -29,6 +29,8 @@ class Runner:
                 return
 
     def start(self, stop):
-        thread = threading.Thread(target=self.run, args=(stop,), name=f'source-{self.source.name}', daemon=True)
+        thread = threading.Thread(
+            target=self.run, args=(stop,), name=f"source-{self.source.name}", daemon=True
+        )
         thread.start()
         return thread

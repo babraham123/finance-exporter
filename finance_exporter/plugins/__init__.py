@@ -4,10 +4,10 @@ from .treasury import Treasury
 from .yahoo import Yahoo
 
 PLUGINS = {
-    'yfinance': Yahoo,
-    'fred': Fred,
-    'treasury': Treasury,
-    'alphavantage': AlphaVantage,
+    "yfinance": Yahoo,
+    "fred": Fred,
+    "treasury": Treasury,
+    "alphavantage": AlphaVantage,
 }
 
 
