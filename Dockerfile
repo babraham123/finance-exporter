@@ -1,4 +1,4 @@
-FROM docker.io/python:3-slim-bookworm
+FROM docker.io/python:3-slim-trixie
 WORKDIR /usr/src/app
 COPY pyproject.toml ./
 COPY finance_exporter ./finance_exporter
