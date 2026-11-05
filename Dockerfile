@@ -1,4 +1,4 @@
-FROM docker.io/python:3-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51
+FROM docker.io/python:3-slim-trixie@sha256:8c13a3f37a6a5b71498228e902c4b9f51c1f7900d49fabf71f9a650c6120e0d0
 WORKDIR /usr/src/app
 COPY pyproject.toml ./
 COPY finance_exporter ./finance_exporter
