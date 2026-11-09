@@ -21,8 +21,8 @@ jobs:
         with:
           enable-cache: false
       # Rules and style are in ruff.toml.
-      - run: uvx ruff@0.17.2 check .
-      - run: uvx ruff@0.17.2 format --check .
+      - run: uvx ruff@0.17.4 check .
+      - run: uvx ruff@0.17.4 format --check .
       # The sources replay recorded fixtures, so the tests need no network.
       - run: pip install '.[dev]'
       - run: pytest -rs
