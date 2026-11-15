@@ -47,18 +47,36 @@ def test_source_records_each_metric_type_and_keeps_last_known_labels():
     source.poll()
     samples = read_samples(registry)
 
-    # The second quote lacks sector, so the series keeps the last known value rather than splitting
-    assert (
-        find(samples, "finance_price", ticker="X", sector="Tech", source="scripted", plugin="fake")
-        == 12
-    )
-    assert label_names(samples, "finance_price") == {
+    assert find(samples, "finance_price", ticker="X", source="scripted", plugin="fake") == 12
+    assert label_names(samples, "finance_price") == {frozenset({"plugin", "source", "ticker"})}
+    # The second quote lacks sector, so the info series keeps the last known value
+    assert find(samples, "finance_scripted_info", ticker="X", sector="Tech") == 1
+    assert label_names(samples, "finance_scripted_info") == {
         frozenset({"plugin", "source", "ticker", "sector"})
     }
     assert find(samples, "finance_price_histogram_count", ticker="X") == 2
     assert find(samples, "finance_price_histogram_sum", ticker="X") == 22
     assert find(samples, "finance_price_summary_sum", ticker="X") == 11
     assert find(samples, "finance_updates_total", ticker="X") == 2
+
+
+def test_changed_label_field_leaves_one_series_per_ticker():
+    plugin = ScriptedPlugin(
+        {"X": {"price": 10, "rating": "buy"}, "Y": {"price": 20, "rating": "hold"}},
+        {"X": {"price": 11, "rating": "sell"}},
+    )
+    source, registry = scripted_source(plugin, tickers=["X", "Y"], labels={"rating": "rating"})
+    source.poll()
+    source.poll()
+    samples = read_samples(registry)
+
+    # find() fails on more than one match, so a ticker-only match proves a single series
+    assert find(samples, "finance_price", ticker="X") == 11
+    assert find(samples, "finance_scripted_info", ticker="X") == 1
+    assert find(samples, "finance_scripted_info", ticker="X", rating="sell") == 1
+    # Tickers missing from the poll keep their series
+    assert find(samples, "finance_price", ticker="Y") == 20
+    assert find(samples, "finance_scripted_info", ticker="Y", rating="hold") == 1
 
 
 def test_source_failure_mid_poll_counts_errors_only_for_unfetched_tickers():

@@ -49,7 +49,9 @@ definitions:
     properties:
       name:
         title: Name of data source
+        description: Also names the source's info metric, <prefix>_<name>_info
         type: string
+        pattern: ^\w+$
       interval:
         title: Collection interval
         description: Seconds between the starts of consecutive polls of this source
@@ -76,7 +78,7 @@ definitions:
             $ref: "#/definitions/metric"
       labels:
         title: Labels to retrieve from source
-        description: Name / Value pairs of labels where Value is the field to use from the API response to populate the label
+        description: Name / Value pairs of labels where Value is the field to use from the API response to populate the label. Exported on the source's info metric, not on its metrics.
         type: object
         patternProperties:
           ^\w+$:

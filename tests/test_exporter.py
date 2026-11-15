@@ -142,16 +142,10 @@ def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     for symbol, asset_class in YAHOO_ASSET_CLASSES.items():
         price = fixture("yfinance", "info", symbol)["regularMarketPrice"]
         assert (
-            find(
-                samples,
-                "finance_current_price",
-                ticker=symbol,
-                asset_class=asset_class,
-                source="yahoo",
-                plugin="yfinance",
-            )
+            find(samples, "finance_current_price", ticker=symbol, source="yahoo", plugin="yfinance")
             == price
         )
+        assert find(samples, "finance_yahoo_info", ticker=symbol, asset_class=asset_class) == 1
     spy = fixture("yfinance", "info", "SPY")
     assert find(samples, "finance_net_expense_ratio", ticker="SPY") == pytest.approx(
         spy["netExpenseRatio"] * 0.01
@@ -160,14 +154,18 @@ def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     # Mutual fund details missing from the quote are filled from fund data
     vtsax_funds = fixture("yfinance", "funds", "VTSAX")
     assert (
+        find(samples, "finance_report_expense_ratio", ticker="VTSAX")
+        == vtsax_funds["fund_operations"]["Annual Report Expense Ratio"]
+    )
+    assert (
         find(
             samples,
-            "finance_report_expense_ratio",
+            "finance_yahoo_info",
             ticker="VTSAX",
             category=vtsax_funds["fund_overview"]["categoryName"],
             fund_family=vtsax_funds["fund_overview"]["family"],
         )
-        == vtsax_funds["fund_operations"]["Annual Report Expense Ratio"]
+        == 1
     )
     assert (
         find(samples, "finance_stock_position", ticker="VTSAX")
@@ -180,13 +178,19 @@ def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     for series_id in FRED_SERIES:
         latest = latest_fred_observation(series_id)
         series = fixture("fred", "series", series_id)["seriess"][0]
-        assert find(
-            samples,
-            "finance_fred_value",
-            ticker=series_id,
-            asset_class="rate",
-            frequency=series["frequency"],
-        ) == pytest.approx(float(latest["value"]) * 0.01)
+        assert find(samples, "finance_fred_value", ticker=series_id) == pytest.approx(
+            float(latest["value"]) * 0.01
+        )
+        assert (
+            find(
+                samples,
+                "finance_fred_info",
+                ticker=series_id,
+                asset_class="rate",
+                frequency=series["frequency"],
+            )
+            == 1
+        )
         assert find(samples, "finance_fred_observation_time", ticker=series_id) == midnight_utc(
             latest["date"]
         )
@@ -198,13 +202,19 @@ def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     ]:
         row = latest_treasury_row(curve)
         for tenor, column in columns.items():
-            assert find(
-                samples,
-                f"finance_{name}_yield",
-                ticker=tenor,
-                curve=curve,
-                asset_class="treasury_yield",
-            ) == pytest.approx(float(row[column]) * 0.01)
+            assert find(samples, f"finance_{name}_yield", ticker=tenor) == pytest.approx(
+                float(row[column]) * 0.01
+            )
+            assert (
+                find(
+                    samples,
+                    f"finance_{name}_info",
+                    ticker=tenor,
+                    curve=curve,
+                    asset_class="treasury_yield",
+                )
+                == 1
+            )
             assert find(samples, f"finance_{name}_observation_time", ticker=tenor) == midnight_utc(
                 row["Date"], "%m/%d/%Y"
             )
@@ -212,21 +222,23 @@ def test_all_sources_export_their_own_metrics(start_exporter, fred_key):
     # AlphaVantage: quote, overview and latest earnings merged
     ibm_quote = fixture("alphavantage", "query", "GLOBAL_QUOTE", "IBM")["Global Quote"]
     ibm_earnings = fixture("alphavantage", "query", "EARNINGS", "IBM")["quarterlyEarnings"][0]
-    assert find(samples, "finance_av_price", ticker="IBM", asset_class="stock") == float(
-        ibm_quote["05. price"]
-    )
+    assert find(samples, "finance_av_price", ticker="IBM") == float(ibm_quote["05. price"])
+    assert find(samples, "finance_alphavantage_info", ticker="IBM", asset_class="stock") == 1
     assert find(samples, "finance_av_reported_eps", ticker="IBM") == float(
         ibm_earnings["reportedEPS"]
     )
 
-    # Each source's metrics carry only that source's labels
+    # Value metrics carry only the default labels; each source's info metric carries its own labels
     assert label_names(samples, "finance_current_price") == {
+        frozenset({"plugin", "source", "ticker"})
+    }
+    assert label_names(samples, "finance_yahoo_info") == {
         frozenset({"plugin", "source", "ticker", "asset_class", "category", "fund_family"})
     }
-    assert label_names(samples, "finance_fred_value") == {
+    assert label_names(samples, "finance_fred_info") == {
         frozenset({"plugin", "source", "ticker", "asset_class", "frequency"})
     }
-    assert label_names(samples, "finance_treasury_yield") == {
+    assert label_names(samples, "finance_treasury_info") == {
         frozenset({"plugin", "source", "ticker", "asset_class", "curve"})
     }
     # Built-in metrics use only the default labels: one update per ticker, one timed poll per source, no errors
@@ -378,6 +390,20 @@ def test_source_wide_failure_counts_an_error_per_ticker(start_exporter):
         (
             lambda: config(treasury_source(), {**treasury_source(), "name": "other"}),
             "metric names must be unique across sources",
+        ),
+        (
+            lambda: config(
+                yahoo_source(),
+                {
+                    **treasury_source(),
+                    "metrics": {"yahoo_info": {"item": "value", "type": "Gauge", "help": "Value"}},
+                },
+            ),
+            "Metric yahoo_info is defined by sources yahoo and treasury",
+        ),
+        (
+            lambda: config({**yahoo_source(), "name": "yahoo-quotes"}),
+            "Invalid config at sources/0/name: 'yahoo-quotes' does not match",
         ),
         (
             lambda: config(yahoo_source(), {**yahoo_source(["SPY"]), "metrics": {}}),

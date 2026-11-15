@@ -2,7 +2,7 @@
 
 import logging
 
-from prometheus_client import Counter, Gauge, Histogram, Summary
+from prometheus_client import Counter, Gauge, Histogram, Info, Summary
 
 log = logging.getLogger(__name__)
 
@@ -47,16 +47,19 @@ class Metrics:
 
     def for_source(self, config):
         """The metrics a source records into, from its SourceConfig. Metric names must be unique across sources."""
-        for spec in config.metrics:
-            if spec.name in BUILTIN_METRICS:
+        names = [spec.name for spec in config.metrics]
+        if config.labels:
+            names.append(info_name(config))
+        for name in names:
+            if name in BUILTIN_METRICS:
                 raise Exception(
-                    f"Metric {spec.name} in source {config.name} clashes with a built-in metric"
+                    f"Metric {name} in source {config.name} clashes with a built-in metric"
                 )
-            if spec.name in self.owners:
+            if name in self.owners or names.count(name) > 1:
                 raise Exception(
-                    f"Metric {spec.name} is defined by sources {self.owners[spec.name]} and {config.name}; metric names must be unique across sources"
+                    f"Metric {name} is defined by sources {self.owners.get(name, config.name)} and {config.name}; metric names must be unique across sources"
                 )
-        self.owners.update({spec.name: config.name for spec in config.metrics})
+        self.owners.update({name: config.name for name in names})
         return SourceMetrics(self, config)
 
 
@@ -67,36 +70,47 @@ class SourceMetrics:
         self.builtins = metrics
         self.source = config.name
         self.plugin = config.plugin
-        self.labels = config.labels
-        self.label_names = list(DEFAULT_LABELS) + [
-            label for label in self.labels if label not in DEFAULT_LABELS
-        ]
+        self.labels = {
+            label: field for label, field in config.labels.items() if label not in DEFAULT_LABELS
+        }
         self.metrics = list()
         for spec in config.metrics:
             metric_class, record = METRIC_TYPES[spec.type]
             metric = metric_class(
-                metrics.name(spec.name), spec.help, self.label_names, registry=metrics.registry
+                metrics.name(spec.name), spec.help, DEFAULT_LABELS, registry=metrics.registry
             )
             self.metrics.append((spec, metric, record))
-        # Last known label values per ticker, so a quote missing a label field doesn't split the series
+        # Label fields such as a name or an analyst recommendation change over time. Keeping them off
+        # the value metrics gives each ticker one series, and an Info child holds one label set at a time.
+        self.info = None
+        if self.labels:
+            self.info = Info(
+                metrics.name(config.name),
+                f"Labels of each {config.name} ticker",
+                DEFAULT_LABELS,
+                registry=metrics.registry,
+            )
+        # Last known label values per ticker, so a quote missing a label field doesn't drop the label
         self.label_cache = dict()
 
     def record(self, ticker, quote):
         """Record a quote's fields as this source's metrics. Fields that are missing or not numeric are skipped."""
-        labels = self.label_cache.setdefault(ticker, {label: "" for label in self.label_names})
-        labels.update(self._default_labels(ticker))
-        labels.update(
-            {
-                label: str(quote[field])
-                for label, field in self.labels.items()
-                if quote.get(field) is not None
-            }
-        )
-        self.builtins.updates.labels(**self._default_labels(ticker)).inc()
+        default_labels = self._default_labels(ticker)
+        if self.info:
+            labels = self.label_cache.setdefault(ticker, {label: "" for label in self.labels})
+            labels.update(
+                {
+                    label: str(quote[field])
+                    for label, field in self.labels.items()
+                    if quote.get(field) is not None
+                }
+            )
+            self.info.labels(**default_labels).info(labels)
+        self.builtins.updates.labels(**default_labels).inc()
         for spec, metric, record in self.metrics:
             value = _value(spec, ticker, quote)
             if value is not None:
-                record(metric.labels(**labels), value)
+                record(metric.labels(**default_labels), value)
 
     def fetch_failed(self, ticker):
         self.builtins.fetch_errors.labels(**self._default_labels(ticker)).inc()
@@ -106,6 +120,11 @@ class SourceMetrics:
 
     def _default_labels(self, ticker):
         return {"plugin": self.plugin, "source": self.source, "ticker": ticker}
+
+
+def info_name(config):
+    """The source's info metric, which carries its configured labels."""
+    return f"{config.name}_info"
 
 
 def _value(spec, ticker, quote):

@@ -105,13 +105,17 @@ time() - finance_fred_observation_time{ticker="DGS10"} > 4 * 86400
 ```
 
 ### Labels
-Maps label names to source fields. `plugin`, `source` and `ticker` are added automatically.
+Maps label names to source fields. Every metric carries only `plugin`, `source` and `ticker`, so each ticker keeps one series when a field such as `recommendationKey` changes. The configured labels go on the source's info metric, `<prefix>_<source>_info`, which has one series per ticker with value 1.
 ```yaml
     labels:
       asset_class: asset_class
       name: shortName
       sector: sector
       category: category
+```
+Join the info metric to filter or label a query by a configured label:
+```
+finance_current_price * on (plugin, source, ticker) group_left (name) finance_yahoo_info{asset_class="etf"}
 ```
 
 ### Built-in metrics
