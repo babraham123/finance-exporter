@@ -10,7 +10,9 @@
   ],
   "minimumReleaseAge": "3 days",
   "osvVulnerabilityAlerts": true,
-  "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
+  "dependencyDashboard": {
+    "osvVulnerabilitySummary": "unresolved"
+  },
   "customManagers": [
     {
       "customType": "regex",
